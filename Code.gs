@@ -155,11 +155,28 @@ function extractFromOrderSummary(text, txnType) {
 
   const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
 
-  // ── RETAIL (old format) ──
+  // ── RETAIL ──
   if ((txnType||"").toLowerCase() === "retail") {
     for (const line of lines) {
-      const m = line.match(/Product Name:\s*([^,\n]+)/i);
-      if (m) tracked.push(normCode(m[1]));
+      // Old format: "Product Name: MG-3183-1, Amount: 2995"
+      const oldMatch = line.match(/Product Name:\s*([^,\n]+)/i);
+      if (oldMatch) { tracked.push(normCode(oldMatch[1])); continue; }
+
+      // New format: "MG-3177-2 ₱2,995.00"
+      if (/^PURCHASED ITEMS/i.test(line)) continue;
+      if (/^PURCHASE TOTAL/i.test(line)) continue;
+      if (/^GRAND TOTAL/i.test(line)) continue;
+      if (/^PAYMENT SUMMARY/i.test(line)) continue;
+      if (/^Amount Paid/i.test(line)) continue;
+      if (/^Remaining Balance/i.test(line)) continue;
+      if (/^-{5,}/.test(line)) continue;
+
+      // Line with ₱ price — extract code before the ₱
+      const newMatch = line.match(/^([A-Z0-9][A-Z0-9\-\.\s]+?)\s+₱/i);
+      if (newMatch) {
+        const code = normCode(newMatch[1]);
+        if (code) tracked.push(code);
+      }
     }
     return { tracked, qty, packageColor, packageType, isRetail: true };
   }
