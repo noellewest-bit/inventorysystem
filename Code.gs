@@ -731,128 +731,118 @@ function buildPhotoMap() {
   return map;
 }
 
-// ── Cache Helpers ────────────────────────────────────────────
-// Cache duration in seconds. 300 = 5 minutes.
-// Increase to 3600 (1hr) if data changes less frequently.
-const CACHE_TTL = 300;
+// ── Cache ─────────────────────────────────────────────────────
+const CACHE_TTL   = 300;   // 5 minutes
+const CHUNK_SIZE  = 90000; // 90KB per cache entry (GAS limit is 100KB)
 
-function getCached(key) {
+function cacheGet(key) {
   try {
-    const cache = CacheService.getScriptCache();
-    // Large payloads are chunked across multiple cache keys
-    const meta = cache.get(key + "_meta");
+    const c    = CacheService.getScriptCache();
+    const meta = c.get("nw_" + key + "_meta");
     if (!meta) return null;
-    const { chunks } = JSON.parse(meta);
-    let joined = "";
-    for (let i = 0; i < chunks; i++) {
-      const chunk = cache.get(key + "_chunk_" + i);
-      if (!chunk) return null; // chunk expired
-      joined += chunk;
+    const { n } = JSON.parse(meta);
+    let out = "";
+    for (let i = 0; i < n; i++) {
+      const chunk = c.get("nw_" + key + "_" + i);
+      if (chunk === null) return null; // a chunk expired — treat as miss
+      out += chunk;
     }
-    return joined;
-  } catch(e) {
-    Logger.log("getCached error: " + e);
-    return null;
-  }
+    return out;
+  } catch(e) { return null; }
 }
 
-function setCached(key, jsonString) {
+function cachePut(key, str) {
   try {
-    const cache = CacheService.getScriptCache();
-    // Cache entries max 100KB each — chunk large payloads
-    const CHUNK_SIZE = 90000;
-    const chunks = Math.ceil(jsonString.length / CHUNK_SIZE);
-    const entries = { [key + "_meta"]: JSON.stringify({ chunks }) };
-    for (let i = 0; i < chunks; i++) {
-      entries[key + "_chunk_" + i] = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const c      = CacheService.getScriptCache();
+    const n      = Math.ceil(str.length / CHUNK_SIZE);
+    const entries = { ["nw_" + key + "_meta"]: JSON.stringify({ n }) };
+    for (let i = 0; i < n; i++) {
+      entries["nw_" + key + "_" + i] = str.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
     }
-    cache.putAll(entries, CACHE_TTL);
-  } catch(e) {
-    Logger.log("setCached error: " + e);
-  }
+    c.putAll(entries, CACHE_TTL);
+  } catch(e) { Logger.log("cachePut error: " + e); }
 }
 
-function clearAllCaches() {
+function cacheClear() {
   try {
-    const cache = CacheService.getScriptCache();
-    cache.removeAll(["nw_all", "nw_all_meta", "nw_photos", "nw_photos_meta"]);
-    // Also remove chunks
-    for (let i = 0; i < 50; i++) {
-      cache.remove("nw_all_chunk_" + i);
-      cache.remove("nw_photos_chunk_" + i);
+    const c    = CacheService.getScriptCache();
+    const keys = ["nw_all_meta", "nw_photos_meta"];
+    for (let i = 0; i < 60; i++) {
+      keys.push("nw_all_" + i);
+      keys.push("nw_photos_" + i);
     }
+    c.removeAll(keys);
   } catch(e) {}
 }
 
 // ── Web App ───────────────────────────────────────────────────
 
 function doGet(e) {
-  const path     = (e.parameter && e.parameter.path)     || "dashboard";
-  const code     = (e.parameter && e.parameter.code)     || null;
-  const callback = (e.parameter && e.parameter.callback) || null;
-  const bust     = (e.parameter && e.parameter.bust)     || null; // cache buster
+  const path     = (e && e.parameter && e.parameter.path)     || "dashboard";
+  const code     = (e && e.parameter && e.parameter.code)     || null;
+  const callback = (e && e.parameter && e.parameter.callback) || null;
+  const bust     = (e && e.parameter && e.parameter.bust)     || null;
   let data;
 
   try {
+
+    // ── Clear cache ──
     if (path === "clearcache") {
-      clearAllCaches();
+      cacheClear();
       data = { cleared: true };
+
+    // ── Photos ──
     } else if (path === "photos") {
-      // Photos have their own cache key
-      let photoCached = bust ? null : getCached("nw_photos");
-      if (photoCached) {
-        data = JSON.parse(photoCached);
+      const cached = bust ? null : cacheGet("photos");
+      if (cached) {
+        data = JSON.parse(cached);
       } else {
         data = buildPhotoMap();
-        setCached("nw_photos", JSON.stringify(data));
-      }
-    } else {
-      // All inventory/transaction data shares one cache key
-      let allCached = bust ? null : getCached("nw_all");
-      let built;
-      if (allCached) {
-        built = JSON.parse(allCached);
-      } else {
-        built = buildAll();
-        // Store serialisable version
-        const serialised = {
-          inventoryResults: built.inventoryResults,
-          packageResults:   built.packageResults,
-          quantityResults:  built.quantityResults,
-          transactions:     built.transactions,
-          rentalHistory:    built.rentalHistory
-        };
-        setCached("nw_all", JSON.stringify(serialised));
+        cachePut("photos", JSON.stringify(data));
       }
 
-      if      (path === "inventory")    data = Object.values(built.inventoryResults);
-      else if (path === "transactions") data = built.transactions;
-      else if (path === "packages")     data = Object.values(built.packageResults);
-      else if (path === "quantity")     data = built.quantityResults;
-      else if (path === "item" && code) {
-        const upperCode = code.toUpperCase();
-        const item = built.inventoryResults[upperCode];
-        const history = (built.rentalHistory||{})[upperCode] || [];
-        data = item ? { ...item, history } : null;
+    // ── All inventory / transaction paths ──
+    } else {
+      const cached = bust ? null : cacheGet("all");
+      let inv, pkgs, qty, txns, history;
+
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        inv     = parsed.inv;
+        pkgs    = parsed.pkgs;
+        qty     = parsed.qty;
+        txns    = parsed.txns;
+        history = parsed.history;
       } else {
-        data = getDashboard(built.inventoryResults, built.transactions);
+        const built = buildAll();
+        inv     = built.inventoryResults;
+        pkgs    = built.packageResults;
+        qty     = built.quantityResults;
+        txns    = built.transactions;
+        history = built.rentalHistory;
+        cachePut("all", JSON.stringify({ inv, pkgs, qty, txns, history }));
+      }
+
+      if      (path === "inventory")    data = Object.values(inv);
+      else if (path === "transactions") data = txns;
+      else if (path === "packages")     data = Object.values(pkgs);
+      else if (path === "quantity")     data = qty;
+      else if (path === "item" && code) {
+        const uc   = code.toUpperCase();
+        const item = inv[uc];
+        data = item ? { ...item, history: (history[uc] || []) } : null;
+      } else {
+        data = getDashboard(inv, txns);
       }
     }
+
   } catch(err) {
     const errOut = JSON.stringify({ ok: false, error: err.toString() });
-    if (callback) {
-      return ContentService.createTextOutput(callback + "(" + errOut + ")")
-        .setMimeType(ContentService.MimeType.JAVASCRIPT);
-    }
-    return ContentService.createTextOutput(errOut)
-      .setMimeType(ContentService.MimeType.JSON);
+    if (callback) return ContentService.createTextOutput(callback + "(" + errOut + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+    return ContentService.createTextOutput(errOut).setMimeType(ContentService.MimeType.JSON);
   }
 
   const output = JSON.stringify({ ok: true, data });
-  if (callback) {
-    return ContentService.createTextOutput(callback + "(" + output + ")")
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return ContentService.createTextOutput(output)
-    .setMimeType(ContentService.MimeType.JSON);
+  if (callback) return ContentService.createTextOutput(callback + "(" + output + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+  return ContentService.createTextOutput(output).setMimeType(ContentService.MimeType.JSON);
 }
