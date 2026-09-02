@@ -632,7 +632,8 @@ function showTxnDrawer(txnNum) {
     <div class="detail-row"><span class="detail-label">Pickup</span><span class="detail-value">${fmtDate(t.pickupDate)}</span></div>
     <div class="detail-row"><span class="detail-label">Return</span><span class="detail-value">${fmtDate(t.returnDate)}</span></div>
     ${chips?`<div class="detail-row"><span class="detail-label">Tracked Items</span><div class="detail-value"><div class="items-list">${chips}</div></div></div>`:""}
-    ${qtyRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Quantity Items</div>${qtyRows}</div>`:""}`;
+    ${qtyRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Quantity Items</div>${qtyRows}</div>`:""}
+    ${t.orderSummary?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Order Summary</div><pre style="font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.6;background:var(--paper);padding:12px;border-radius:4px;border:1px solid var(--cloud)">${esc(t.orderSummary)}</pre></div>`:""}`;
   openDrawer(html, t.txnNum, t.customer);
 }
 

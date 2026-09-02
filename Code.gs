@@ -1,6 +1,6 @@
 // ============================================================
 // NOELLE WEST INVENTORY TRACKER — Google Apps Script Backend
-// Complete v4
+// v5 — corrected column mapping + new Order Summary format
 // ============================================================
 
 const SS = {
@@ -12,32 +12,29 @@ const SS = {
 
 const DRIVE_ROOT_ID = "16L4sNbVS0IwR-en51goyyV4dRgpzWaK0";
 
-// Individually tracked sheets
-const TRACKED_SHEETS = [
-  "BGI","BGS","PGI","PGS","PGC","FIL","MG","CD","MS","CS","PET-#","S-UPPER"
-];
-// Color-coded tracked sheets (derived from package color)
-const COLOR_TRACKED = ["MOH","BMG","FGG"];
-// Quantity-based sheets
-const QTY_SHEETS = [
-  "PET","BCPO","BOY","BPSC","BPO","BPOL","BPS","COAT BARONG",
-  "BCC","BPOC","VST","POLO","ACC","PEN","PANTS"
-];
-// Package roles that are quantity-based
-const QTY_ROLES = [
-  "groom suit","men's set","child suit","father","bearer",
-  "groom barong","groom"
-];
+const TRACKED_SHEETS  = ["BGI","BGS","PGI","PGS","PGC","FIL","MG","CD","MS","CS","PET-#","S-UPPER"];
+const COLOR_TRACKED   = ["MOH","BMG","FGG"];
+const QTY_SHEETS      = ["PET","BCPO","BOY","BPSC","BPO","BPOL","BPS","COAT BARONG","BCC","BPOC","VST","POLO","ACC","PEN","PANTS"];
+const PERMANENT_OUT   = ["SOLD OUT","MISSING","DAMAGE","SLIGHTLY DAMAGE","SEVERANCE","DIP SEVERANCE","NOT RETURNED BY CUSTOMER","R-YAM","NOT AVAILABLE","STOLEN"];
 
-const PERMANENT_OUT = [
-  "SOLD OUT","MISSING","DAMAGE","SLIGHTLY DAMAGE","SEVERANCE",
-  "DIP SEVERANCE","NOT RETURNED BY CUSTOMER","R-YAM",
-  "NOT AVAILABLE","STOLEN"
-];
+// COLUMN INDICES (0-based)
+// A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12
+// N=13, O=14, P=15, Q=16, R=17, S=18, T=19, U=20, V=21, W=22, X=23
+// AF = 31
+const COL = {
+  txnNum:      4,  // E - Unique ID
+  firstName:   5,  // F
+  lastName:    6,  // G
+  branch:      10, // K
+  txnType:     11, // L - "Rental" or "Retail"
+  orderSummary:12, // M - ALL items now in here
+  pickupDate:  21, // V
+  returnDate:  22, // W
+};
 
-// Row offsets (1-indexed in Sheets, 0-indexed in array)
-const ROW_PACKAGES = 11657; // row 11658
-const ROW_ITEMS    = 13860; // row 13861
+// Row limits (0-indexed)
+const ROW_START = 1; // read all rows for transaction metadata
+const ROW_ITEMS = 13860; // row 13861 — new format starts here
 
 // ── Utilities ─────────────────────────────────────────────────
 
@@ -67,20 +64,19 @@ function isPermanentOut(s) {
   return PERMANENT_OUT.includes((s||"").toUpperCase().trim());
 }
 
-function isTrackedCategory(code) {
+function isTrackedCode(code) {
   const upper = (code||"").toUpperCase();
   for (const cat of TRACKED_SHEETS) {
-    const prefix = cat === "PET-#" ? "PET-" : cat+"-";
-    const exact  = cat === "PET-#" ? false  : upper === cat;
-    if (exact) return true;
-    if (upper.startsWith(prefix)) return true;
-    // S-UPPER special
-    if (cat === "S-UPPER" && upper.startsWith("S UPPER-")) return true;
-    if (cat === "S-UPPER" && upper.startsWith("S-UPPER-")) return true;
-    // PET-# special: PET-\d or PET-N HOOPS
-    if (cat === "PET-#" && /^PET-\d/i.test(upper)) return true;
+    if (cat === "PET-#") {
+      if (/^PET-\d/i.test(upper)) return true;
+      continue;
+    }
+    if (cat === "S-UPPER") {
+      if (upper.startsWith("S UPPER-") || upper.startsWith("S-UPPER-")) return true;
+      continue;
+    }
+    if (upper === cat || upper.startsWith(cat+"-")) return true;
   }
-  // Color tracked
   for (const cat of COLOR_TRACKED) {
     if (upper.startsWith(cat+"-")) return true;
   }
@@ -95,9 +91,8 @@ function normCode(s) {
 
 function getMasterInventory() {
   const ss = SpreadsheetApp.openById(SS.masterInventory);
-  const inventory = {}; // code → { category, branch, masterStatus, weight }
+  const inventory = {};
 
-  // Tracked sheets
   for (const shName of TRACKED_SHEETS) {
     const sh = ss.getSheetByName(shName);
     if (!sh) continue;
@@ -117,8 +112,8 @@ function getMasterInventory() {
     }
   }
 
-  // Color-tracked sheets (MOH, BMG, FGG)
-  const colorQty = { MOH: 1, BMG: 5, FGG: 5 };
+  // Color-tracked: MOH, BMG, FGG
+  const colorQty = { MOH:1, BMG:5, FGG:5 };
   for (const shName of COLOR_TRACKED) {
     const sh = ss.getSheetByName(shName);
     if (!sh) continue;
@@ -127,15 +122,7 @@ function getMasterInventory() {
       const color = (vals[r][0]||"").toString().trim();
       if (!color) continue;
       const code = shName+"-"+color.toUpperCase();
-      inventory[code] = {
-        category: shName,
-        branch: "",
-        masterStatus: "AVAILABLE",
-        weight: null,
-        colorTracked: true,
-        qty: colorQty[shName],
-        color: color
-      };
+      inventory[code] = { category: shName, branch:"", masterStatus:"AVAILABLE", weight:null, colorTracked:true, qty:colorQty[shName], color };
     }
   }
 
@@ -154,183 +141,234 @@ function getPackageColors() {
   return colors;
 }
 
-// ── Column N Extraction ───────────────────────────────────────
+// ── Order Summary Extraction (Column M) ───────────────────────
+// Handles both old format (Product Name: X) and new format
 
-function extractFromN(cellText, txnType) {
-  const tracked = [];
-  const qty = {};
-  if (!cellText) return { tracked, qty };
+function extractFromOrderSummary(text, txnType) {
+  const tracked  = [];
+  const qty      = {};
+  let packageColor = null;
+  let packageType  = null;
+  let isRetail     = false;
 
-  const lines = cellText.split(/\n/).map(l => l.trim()).filter(Boolean);
+  if (!text || !text.trim()) return { tracked, qty, packageColor, packageType, isRetail };
 
-  if (txnType === "Retail") {
-    // Product Name: MG-3183-1, Amount: 2995
+  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+
+  // ── RETAIL (old format) ──
+  if ((txnType||"").toLowerCase() === "retail") {
     for (const line of lines) {
       const m = line.match(/Product Name:\s*([^,\n]+)/i);
       if (m) tracked.push(normCode(m[1]));
     }
-    return { tracked, qty, isRetail: true };
+    return { tracked, qty, packageColor, packageType, isRetail: true };
   }
 
-  // Rental format
-  for (const line of lines) {
-    if (/^RENTAL ITEMS:/i.test(line)) continue;
-    if (/^RENTAL TOTAL:/i.test(line)) continue;
-    if (!line) continue;
+  // ── Detect format type ──
+  const isPackage = /WEDDING ENTOURAGE PACKAGE|PACKAGE TIER/i.test(text);
+  const isNewRental = /RENTAL ITEMS/i.test(text);
+  const isOldRental = /Product Name:/i.test(text);
 
-    if (line.includes("|")) {
-      // tracked: "PGI-9244 | Rental Rate @ ..."
-      const code = normCode(line.split("|")[0]);
-      if (code) tracked.push(code);
-    } else {
-      // quantity: "POLO-L x 2 @ ..." or "POLO-L x2 @..."
-      const m = line.match(/^(.+?)\s+x\s*(\d+)\s*@/i);
+  // ── OLD RENTAL FORMAT: "Product Name: X, Amount: Y" ──
+  if (isOldRental && !isPackage) {
+    for (const line of lines) {
+      const m = line.match(/Product Name:\s*([^,\n]+)/i);
       if (m) {
-        const name = m[1].trim().toUpperCase();
-        const count = parseInt(m[2]) || 1;
-        qty[name] = (qty[name]||0) + count;
+        const code = normCode(m[1]);
+        if (isTrackedCode(code)) tracked.push(code);
+        else {
+          const qm = line.match(/x\s*(\d+)/i);
+          qty[code] = (qty[code]||0) + (qm ? parseInt(qm[1]) : 1);
+        }
       }
     }
+    return { tracked, qty, packageColor, packageType, isRetail: false };
   }
-  return { tracked, qty, isRetail: false };
-}
 
-// ── Column AF Extraction ──────────────────────────────────────
+  // ── NEW RENTAL FORMAT: "ITEM xN ₱price" ──
+  if (isNewRental && !isPackage) {
+    for (const line of lines) {
+      if (/^RENTAL ITEMS/i.test(line)) continue;
+      if (/^RENTAL TOTAL/i.test(line)) continue;
+      if (/^GRAND TOTAL/i.test(line)) continue;
+      if (/^PAYMENT SUMMARY/i.test(line)) continue;
+      if (/^Amount Paid/i.test(line)) continue;
+      if (/^Remaining Balance/i.test(line)) continue;
+      if (/^-{5,}/.test(line)) continue;
 
-function extractFromAF(cellText) {
-  const tracked  = [];
-  const qty      = {};
-  let packageColor = null;
-  let packageType  = null; // "1C","2C","3C","4C"
-  if (!cellText) return { tracked, qty, packageColor, packageType };
-
-  const lines = cellText.split(/\n/).map(l => l.trim()).filter(Boolean);
-  let inAddOns = false;
-
-  for (const line of lines) {
-    // Ignore lines
-    if (/^PACKAGE SUBTOTAL/i.test(line)) continue;
-    if (/^ADD-ON SUBTOTAL/i.test(line)) continue;
-    if (/^GRAND TOTAL/i.test(line)) continue;
-
-    // Package type
-    if (/^PACKAGE:/i.test(line)) {
-      const m = line.match(/PACKAGE\s+(\d+C)/i);
-      if (m) packageType = m[1].toUpperCase();
-      continue;
-    }
-
-    // Package color
-    if (/^PACKAGE COLOR:/i.test(line)) {
-      packageColor = line.replace(/^PACKAGE COLOR:\s*/i,"").trim().toUpperCase();
-      continue;
-    }
-
-    // ADD-ONS section marker
-    if (/^ADD-ONS:/i.test(line)) { inAddOns = true; continue; }
-
-    // Lines with "/" = tracked item
-    if (line.includes("/")) {
-      // BGI/BGI-6100 x 1 @ ... or BGI/BGI-9929 x 1 | Regular: ...
-      // Also: Bridal Gown | #1: BGI/BGI-6100 x 1
-      const slashIdx = line.indexOf("/");
-      const afterSlash = line.substring(slashIdx+1);
-      // extract code before " x " or " |"
-      const codeMatch = afterSlash.match(/^([^\s]+(?:\s[^\s]+)*?)\s+x\s+\d+/i) ||
-                        afterSlash.match(/^([^\s|]+)/i);
-      if (codeMatch) {
-        const code = normCode(codeMatch[1]);
-        if (code && code !== "(NOT" && !code.startsWith("(NOT")) {
-          if (isTrackedCategory(code)) {
+      // Has "/" = tracked add-on: "BGI/BGI-9343 x1 ₱price"
+      if (line.includes("/")) {
+        const slashIdx = line.indexOf("/");
+        const afterSlash = line.substring(slashIdx+1);
+        const cm = afterSlash.match(/^([^\s₱]+)/);
+        if (cm) {
+          const code = normCode(cm[1]);
+          if (isTrackedCode(code)) {
             tracked.push(code);
           } else {
-            // quantity-based add-on with /
-            const qtyMatch = afterSlash.match(/^([^\s|]+)\s+x\s+(\d+)/i);
-            const count = qtyMatch ? parseInt(qtyMatch[2])||1 : 1;
-            qty[code] = (qty[code]||0) + count;
+            const qm = afterSlash.match(/x(\d+)/i);
+            qty[code] = (qty[code]||0) + (qm ? parseInt(qm[1]) : 1);
           }
         }
+        continue;
       }
-      continue;
+
+      // "COAT BARONG - M x1 ₱900.00"
+      // Extract: everything before the last "x\d" pattern
+      const qm = line.match(/^(.+?)\s+x(\d+)\s*₱/i);
+      if (qm) {
+        const name = qm[1].trim().toUpperCase();
+        const count = parseInt(qm[2]) || 1;
+        if (isTrackedCode(name)) {
+          for (let i=0;i<count;i++) tracked.push(name);
+        } else {
+          qty[name] = (qty[name]||0) + count;
+        }
+      }
+    }
+    return { tracked, qty, packageColor, packageType, isRetail: false };
+  }
+
+  // ── PACKAGE FORMAT ──
+  if (isPackage) {
+    // Extract package type and color
+    for (const line of lines) {
+      const tierMatch = line.match(/Package Tier:\s*Package\s+(\w+)/i);
+      if (tierMatch) packageType = "PACKAGE " + tierMatch[1].toUpperCase();
+
+      const colorMatch = line.match(/^Color:\s*(.+)$/i);
+      if (colorMatch) packageColor = colorMatch[1].trim().toUpperCase();
     }
 
-    // Maid of Honor x 1, Bridesmaid x 5, Flower Girl x 5 etc.
-    const roleMatch = line.match(/^(.+?)\s+x\s+(\d+)\s*@/i) ||
-                      line.match(/^(.+?)\s+x\s+(\d+)\s*$/i);
-    if (roleMatch) {
-      const roleName = roleMatch[1].trim().toLowerCase();
-      const count    = parseInt(roleMatch[2])||1;
+    let pendingRole = null; // role waiting for its Item Code line
 
-      if (roleName === "maid of honor" && packageColor) {
-        // tracked as MOH-[COLOR]
-        const code = "MOH-"+packageColor;
-        tracked.push(code);
-      } else if (roleName === "bridesmaid" && packageColor) {
-        const code = "BMG-"+packageColor;
-        tracked.push(code); // qty 5 by default, stored as one entry
-      } else if (roleName === "flower girl" && packageColor) {
-        const code = "FGG-"+packageColor;
-        tracked.push(code);
-      } else if (roleName === "groom suit" || roleName === "groom barong") {
-        if (packageType === "3C" || packageType === "4C") {
-          qty["S-UPPER"] = (qty["S-UPPER"]||0) + count;
-        } else {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Skip metadata
+      if (/^WEDDING ENTOURAGE PACKAGE/i.test(line)) continue;
+      if (/^Package Tier:/i.test(line)) continue;
+      if (/^Fabric:/i.test(line)) continue;
+      if (/^Men's:/i.test(line)) continue;
+      if (/^Color:/i.test(line)) continue;
+      if (/^Add-On Items/i.test(line)) continue;
+      if (/^Package Subtotal/i.test(line)) continue;
+      if (/^Add-On Subtotal/i.test(line)) continue;
+      if (/^PACKAGE TOTAL/i.test(line)) continue;
+      if (/^GRAND TOTAL/i.test(line)) continue;
+      if (/^PAYMENT SUMMARY/i.test(line)) continue;
+      if (/^Amount Paid/i.test(line)) continue;
+      if (/^Remaining Balance/i.test(line)) continue;
+      if (/^-{5,}/.test(line)) continue;
+
+      // Item Code line: "Item Code: #1: BGI/BGI-9343" or "Item Code: #1: (not selected)"
+      if (/^Item Code:/i.test(line)) {
+        const slots = line.replace(/^Item Code:\s*/i,"").split(",");
+        for (const slot of slots) {
+          if (/not selected/i.test(slot)) continue;
+          if (slot.includes("/")) {
+            const slashIdx = slot.indexOf("/");
+            const code = normCode(slot.substring(slashIdx+1).trim().split(/\s+/)[0]);
+            if (code && isTrackedCode(code)) tracked.push(code);
+          }
+        }
+        pendingRole = null;
+        continue;
+      }
+
+      // Add-on lines with "/": "BMG/TULLE RUST BROWN x3 ₱480.00"
+      if (line.includes("/") && !/^Item Code/i.test(line)) {
+        const slashIdx = line.indexOf("/");
+        const prefix   = line.substring(0, slashIdx).trim().toUpperCase();
+        const afterSlash = line.substring(slashIdx+1).trim();
+        // Extract code before "x\d" or "₱"
+        const cm = afterSlash.match(/^(.+?)\s+x(\d+)/i) || afterSlash.match(/^([^\s₱]+)/);
+        if (cm) {
+          const rawCode = cm[1].trim().toUpperCase();
+          const count = cm[2] ? parseInt(cm[2]) : 1;
+          // Build full code: PREFIX/RAWCODE → use rawcode if it already has prefix
+          const fullCode = rawCode.startsWith(prefix+"-") || rawCode.startsWith(prefix+" ") ? rawCode : prefix+"-"+rawCode;
+          if (isTrackedCode(fullCode)) {
+            tracked.push(fullCode);
+          } else if (isTrackedCode(prefix)) {
+            // prefix is tracked category (MOH, BMG, FGG)
+            const colorCode = prefix+"-"+rawCode;
+            tracked.push(colorCode);
+          } else {
+            qty[fullCode] = (qty[fullCode]||0) + count;
+          }
+        }
+        continue;
+      }
+
+      // Role lines: "Bridal Gown x1 ₱600.00", "Bridesmaid x5 ₱278.85"
+      const roleMatch = line.match(/^(.+?)\s+x(\d+)\s*₱/i);
+      if (roleMatch) {
+        const roleName = roleMatch[1].trim();
+        const count    = parseInt(roleMatch[2]) || 1;
+        const roleUp   = roleName.toUpperCase();
+
+        if (/bridal gown/i.test(roleName)) {
+          // Tracked — item code comes on next "Item Code:" line
+          pendingRole = "BRIDAL";
+        } else if (/mother'?s gown/i.test(roleName)) {
+          pendingRole = "MOTHER";
+          qty["MOTHER'S GOWN"] = (qty["MOTHER'S GOWN"]||0) + count;
+        } else if (/maid of honor/i.test(roleName) && packageColor) {
+          tracked.push("MOH-"+packageColor);
+        } else if (/bridesmaid/i.test(roleName) && packageColor) {
+          tracked.push("BMG-"+packageColor);
+        } else if (/flower girl/i.test(roleName) && packageColor) {
+          tracked.push("FGG-"+packageColor);
+        } else if (/groom/i.test(roleName)) {
+          const is3C4C = packageType && (packageType.includes("C") && !packageType.includes("1C") && !packageType.includes("2C"));
+          qty[is3C4C ? "S-UPPER" : "BPS/BPOL"] = (qty[is3C4C ? "S-UPPER" : "BPS/BPOL"]||0) + count;
+        } else if (/men'?s/i.test(roleName)) {
+          const is3C4C = packageType && !(/1C|2C/i.test(packageType));
+          if (is3C4C) {
+            qty["VST"]   = (qty["VST"]||0)   + count;
+            qty["POLO"]  = (qty["POLO"]||0)  + count;
+            qty["PANTS"] = (qty["PANTS"]||0) + count;
+          } else {
+            qty["BPO"] = (qty["BPO"]||0) + count;
+          }
+        } else if (/child|bearer|bpo child/i.test(roleName)) {
+          const is3C4C = packageType && !(/1C|2C/i.test(packageType));
+          if (is3C4C) {
+            qty["VST"]   = (qty["VST"]||0)   + count;
+            qty["POLO"]  = (qty["POLO"]||0)  + count;
+            qty["PANTS"] = (qty["PANTS"]||0) + count;
+          } else {
+            qty["BCPO"] = (qty["BCPO"]||0) + count;
+          }
+        } else if (/father/i.test(roleName)) {
           qty["BPS/BPOL"] = (qty["BPS/BPOL"]||0) + count;
-        }
-      } else if (roleName === "men's set") {
-        if (packageType === "3C" || packageType === "4C") {
-          qty["VST"]   = (qty["VST"]||0)   + count;
-          qty["POLO"]  = (qty["POLO"]||0)  + count;
-          qty["PANTS"] = (qty["PANTS"]||0) + count;
         } else {
-          qty["BPO"] = (qty["BPO"]||0) + count;
+          qty[roleUp] = (qty[roleUp]||0) + count;
         }
-      } else if (roleName === "child suit") {
-        if (packageType === "3C" || packageType === "4C") {
-          qty["VST"]   = (qty["VST"]||0)   + count;
-          qty["POLO"]  = (qty["POLO"]||0)  + count;
-          qty["PANTS"] = (qty["PANTS"]||0) + count;
-        } else {
-          qty["BCPO"] = (qty["BCPO"]||0) + count;
-        }
-      } else if (roleName === "father") {
-        qty["BPS/BPOL"] = (qty["BPS/BPOL"]||0) + count;
-      } else {
-        // generic quantity role
-        qty[roleName.toUpperCase()] = (qty[roleName.toUpperCase()]||0) + count;
+        continue;
       }
-      continue;
-    }
-
-    // Mother's Gown special: "Mother's Gown | #1: MG/MG-2003 x 1" already handled by / above
-    // "Mother's Gown | #1: (not selected)" → quantity only
-    if (/mother'?s gown/i.test(line) && /not selected/i.test(line)) {
-      const m = line.match(/x\s+(\d+)/i);
-      qty["MOTHER'S GOWN"] = (qty["MOTHER'S GOWN"]||0) + (m ? parseInt(m[1]) : 1);
     }
   }
 
-  return { tracked, qty, packageColor, packageType };
+  return { tracked, qty, packageColor, packageType, isRetail };
 }
 
 // ── Laundry Parsing ───────────────────────────────────────────
 
 function parseLaundrySheet(ssId, shName) {
-  const trackedAvailable = {}; // code → weight (kg)
-  const qtyAvailable     = {}; // name → count
-
+  const trackedAvailable = {};
+  const qtyAvailable     = {};
   const vals = sheetVals(ssId, shName);
   const fullText = vals.map(row => row.join("\t")).join("\n");
   const lines = fullText.split(/\n/).map(l => l.trim()).filter(Boolean);
 
   for (const line of lines) {
-    // Skip metadata lines
     if (/^TOTAL (ITEMS|WEIGHT|BAGS)/i.test(line)) continue;
     if (/^BAG WEIGHT/i.test(line)) continue;
-    if (/^---\s*BAG/i.test(line)) continue;
-    if (/^BAG \d+\s*[\(\d]/i.test(line)) continue;
+    if (/^BAG \d+/i.test(line)) continue;
+    if (/^---/.test(line)) continue;
 
-    // Category line: "BGI: BGI-10013 (3.170kg), BGI-10204 ..."
     const catMatch = line.match(/^([A-Z][A-Z0-9\s\-]*?):\s+(.+)$/i);
     if (!catMatch) continue;
 
@@ -339,49 +377,32 @@ function parseLaundrySheet(ssId, shName) {
     const itemParts = itemsStr.split(",").map(s => s.trim()).filter(Boolean);
 
     for (const part of itemParts) {
-      // Strip weight "(3.170kg)"
       const weightMatch = part.match(/\((\d+\.?\d*)kg\)/i);
       const weight = weightMatch ? parseFloat(weightMatch[1]) : null;
       let itemStr = part.replace(/\(\d+\.?\d*kg\)/gi,"").trim();
-
-      // Strip quantity "×16" or "x 16"
       const qtyMatch = itemStr.match(/[×x]\s*(\d+)\s*$/i);
       const count = qtyMatch ? parseInt(qtyMatch[1]) : 1;
       itemStr = itemStr.replace(/[×x]\s*\d+\s*$/i,"").trim();
 
-      // Determine if tracked or qty-based
-      const isColorCat = COLOR_TRACKED.includes(category);
+      const isColorCat   = COLOR_TRACKED.includes(category);
       const isTrackedCat = TRACKED_SHEETS.includes(category) || category === "PET-#" || category === "S-UPPER";
 
       if (isColorCat) {
-        // MOH: STARDUST BLUE → MOH-STARDUST BLUE
         const code = category+"-"+itemStr.toUpperCase();
         trackedAvailable[code] = weight;
       } else if (isTrackedCat) {
-        // Strip portion suffix: "MG-2053 - SKIRT" → "MG-2053"
-        // But keep if full name matches (e.g. PET-6 HOOPS)
         let code = itemStr.toUpperCase();
         const portionMatch = code.match(/^(.+?)\s+-\s+(SKIRT|BLOUSE|SUIT|PANTS|VEST|JACKET)$/i);
         if (portionMatch) {
           const baseCode = portionMatch[1].trim();
-          // Sum weight for same item with multiple portions
-          if (trackedAvailable[baseCode] !== undefined && weight !== null) {
-            trackedAvailable[baseCode] = (trackedAvailable[baseCode]||0) + weight;
-          } else {
-            trackedAvailable[baseCode] = weight;
-          }
+          trackedAvailable[baseCode] = (trackedAvailable[baseCode]||0) + (weight||0);
         } else {
-          if (trackedAvailable[code] !== undefined && weight !== null) {
-            trackedAvailable[code] = (trackedAvailable[code]||0) + weight;
-          } else {
-            trackedAvailable[code] = weight;
-          }
+          trackedAvailable[code] = weight !== null
+            ? (trackedAvailable[code]||0) + weight
+            : (trackedAvailable[code] !== undefined ? trackedAvailable[code] : null);
         }
       } else {
-        // Quantity-based: normalize name
-        const name = itemStr.toUpperCase();
-        // Strip inner parens like BPOL-CREAM (L) → BPOL-CREAM L
-        const cleanName = name.replace(/\(([^)]+)\)/g,"$1").trim();
+        const cleanName = itemStr.toUpperCase().replace(/\(([^)]+)\)/g,"$1").trim();
         qtyAvailable[cleanName] = (qtyAvailable[cleanName]||0) + count;
       }
     }
@@ -398,58 +419,37 @@ function getTransactions() {
   const txns = [];
 
   for (let r = 1; r < rows.length; r++) {
-    const row     = rows[r];
-    const txnNum  = (row[4]||"").toString().trim();
+    const row    = rows[r];
+    const txnNum = (row[COL.txnNum]||"").toString().trim();
     if (!txnNum) continue;
 
-    const custF   = (row[5]||"").toString().trim();
-    const custG   = (row[6]||"").toString().trim();
-    const branch  = (row[10]||"").toString().trim().toUpperCase();
-    const txnType = (row[11]||"").toString().trim(); // "Rental" or "Retail"
-    const itemsN  = (row[13]||"").toString().trim();
-    const pickupR = row[22];
-    const returnR = row[23];
-    const colAF   = (row[31]||"").toString().trim();
+    const firstName  = (row[COL.firstName]||"").toString().trim();
+    const lastName   = (row[COL.lastName]||"").toString().trim();
+    const branch     = (row[COL.branch]||"").toString().trim().toUpperCase();
+    const txnType    = (row[COL.txnType]||"").toString().trim();
+    const orderSummary = (row[COL.orderSummary]||"").toString().trim();
+    const pickupDate = parseDate(row[COL.pickupDate]);
+    const returnDate = parseDate(row[COL.returnDate]);
+    const customer   = [firstName, lastName].filter(Boolean).join(" ").trim();
 
-    const customer   = [custF,custG].filter(Boolean).join(" ").trim();
-    const pickupDate = parseDate(pickupR);
-    const returnDate = parseDate(returnR);
+    // Only extract items from row 13861 onwards
+    let trackedItems = [], qtyItems = {}, packageColor = null, packageType = null, isRetail = false;
 
-    const readPkg   = r >= ROW_PACKAGES;
-    const readItems = r >= ROW_ITEMS;
-
-    let trackedItems = [];
-    let qtyItems     = {};
-    let packageColor = null;
-    let packageType  = null;
-    let isRetail     = false;
-
-    if (readItems && itemsN) {
-      const nResult = extractFromN(itemsN, txnType);
-      trackedItems = nResult.tracked || [];
-      qtyItems     = nResult.qty || {};
-      isRetail     = nResult.isRetail || false;
+    if (r >= ROW_ITEMS && orderSummary) {
+      const result = extractFromOrderSummary(orderSummary, txnType);
+      trackedItems  = [...new Set(result.tracked || [])];
+      qtyItems      = result.qty || {};
+      packageColor  = result.packageColor;
+      packageType   = result.packageType;
+      isRetail      = result.isRetail || false;
     }
-
-    if (readPkg && colAF) {
-      const afResult = extractFromAF(colAF);
-      trackedItems = trackedItems.concat(afResult.tracked || []);
-      packageColor = afResult.packageColor;
-      packageType  = afResult.packageType;
-      // Merge qty
-      for (const [k,v] of Object.entries(afResult.qty||{})) {
-        qtyItems[k] = (qtyItems[k]||0) + v;
-      }
-    }
-
-    // Deduplicate tracked items
-    trackedItems = [...new Set(trackedItems)];
 
     txns.push({
       txnNum, customer, branch, txnType, isRetail,
       pickupDate: pickupDate ? pickupDate.toISOString() : null,
       returnDate: returnDate ? returnDate.toISOString() : null,
-      trackedItems, qtyItems, packageColor, packageType
+      trackedItems, qtyItems, packageColor, packageType,
+      orderSummary // include raw text for display
     });
   }
   return txns;
@@ -462,32 +462,21 @@ function buildAll() {
   const packageColors   = getPackageColors();
   const now             = today();
 
-  // Parse both laundry sheets
-  const hw  = parseLaundrySheet(SS.handwash,     "Handwash");
-  const stl = parseLaundrySheet(SS.sendToLaundry,"Send To Laundry");
+  const hw  = parseLaundrySheet(SS.handwash,      "Handwash");
+  const stl = parseLaundrySheet(SS.sendToLaundry, "Send To Laundry");
 
-  // Merge laundry sets
-  const laundryTracked = {}; // code → weight
-  const laundryQty     = {}; // name → count
-
-  for (const [code, w] of Object.entries(hw.trackedAvailable)) {
-    laundryTracked[code] = w;
-  }
+  const laundryTracked = { ...hw.trackedAvailable };
   for (const [code, w] of Object.entries(stl.trackedAvailable)) {
-    if (laundryTracked[code] !== undefined && w !== null) {
-      laundryTracked[code] = (laundryTracked[code]||0) + w;
-    } else {
-      laundryTracked[code] = w;
-    }
+    laundryTracked[code] = w !== null
+      ? (laundryTracked[code]||0) + w
+      : (laundryTracked[code] !== undefined ? laundryTracked[code] : null);
   }
-  for (const [name, count] of Object.entries(hw.qtyAvailable)) {
-    laundryQty[name] = (laundryQty[name]||0) + count;
-  }
+
+  const laundryQty = { ...hw.qtyAvailable };
   for (const [name, count] of Object.entries(stl.qtyAvailable)) {
     laundryQty[name] = (laundryQty[name]||0) + count;
   }
 
-  // Get transactions
   const transactions = getTransactions();
 
   // Build item → latest transaction
@@ -506,22 +495,14 @@ function buildAll() {
     }
   }
 
-  // ── Inventory results ────────────────────────────────────
+  // ── Inventory status ──────────────────────────────────────
   const inventoryResults = {};
 
   for (const [code, meta] of Object.entries(masterInventory)) {
-    let status     = "AVAILABLE";
-    let branch     = meta.branch;
-    let customer   = "";
-    let txnNum     = "";
-    let pickupDate = null;
-    let returnDate = null;
-    let weight     = meta.weight;
+    let status="AVAILABLE", branch=meta.branch, customer="", txnNum="", pickupDate=null, returnDate=null;
+    let weight = meta.weight;
 
-    // Update weight from laundry
-    if (laundryTracked[code] !== undefined) {
-      weight = laundryTracked[code];
-    }
+    if (laundryTracked[code] !== undefined) weight = laundryTracked[code];
 
     if (!meta.colorTracked && isPermanentOut(meta.masterStatus)) {
       status = meta.masterStatus === "SOLD OUT" ? "SOLD" : meta.masterStatus;
@@ -530,132 +511,98 @@ function buildAll() {
       if (txn) {
         const pDate = txn.pickupDate ? new Date(txn.pickupDate) : null;
         const rDate = txn.returnDate ? new Date(txn.returnDate) : null;
-
         if (txn.isRetail) {
-          status = "SOLD"; branch = txn.branch||branch;
-          customer = txn.customer; txnNum = txn.txnNum;
-          pickupDate = txn.pickupDate; returnDate = txn.returnDate;
+          status="SOLD"; branch=txn.branch||branch; customer=txn.customer;
+          txnNum=txn.txnNum; pickupDate=txn.pickupDate; returnDate=txn.returnDate;
         } else if (laundryTracked.hasOwnProperty(code)) {
-          status = "AVAILABLE";
-          if (laundryTracked[code] !== null) weight = laundryTracked[code];
+          status="AVAILABLE";
+          if (laundryTracked[code]!==null) weight=laundryTracked[code];
         } else if (rDate && rDate < now) {
-          status = "FOR LAUNDRY"; branch = txn.branch||branch;
-          customer = txn.customer; txnNum = txn.txnNum;
-          pickupDate = txn.pickupDate; returnDate = txn.returnDate;
+          status="FOR LAUNDRY"; branch=txn.branch||branch; customer=txn.customer;
+          txnNum=txn.txnNum; pickupDate=txn.pickupDate; returnDate=txn.returnDate;
         } else if (pDate && pDate <= now) {
-          status = "RELEASED"; branch = txn.branch||branch;
-          customer = txn.customer; txnNum = txn.txnNum;
-          pickupDate = txn.pickupDate; returnDate = txn.returnDate;
+          status="RELEASED"; branch=txn.branch||branch; customer=txn.customer;
+          txnNum=txn.txnNum; pickupDate=txn.pickupDate; returnDate=txn.returnDate;
         }
       }
     }
 
     inventoryResults[code] = {
-      code, category: meta.category, status, branch,
+      code, category:meta.category, status, branch,
       customer, txnNum, pickupDate, returnDate, weight,
-      colorTracked: meta.colorTracked||false,
-      qty: meta.qty||null
+      colorTracked:meta.colorTracked||false, qty:meta.qty||null
     };
   }
 
-  // ── Package results ───────────────────────────────────────
+  // ── Package status ────────────────────────────────────────
   const packageResults = {};
   for (const color of packageColors) {
     const colorUp = color.toUpperCase();
-    const txn = pkgLatest[colorUp] || pkgLatest[color];
-    let status = "AVAILABLE", branch="", customer="", txnNum="", txnType="";
-
-    const mohCode = "MOH-"+colorUp;
-    const bmgCode = "BMG-"+colorUp;
-    const fggCode = "FGG-"+colorUp;
-
-    // Use MOH status as representative (1 unit, easiest to track)
+    const txn = pkgLatest[colorUp]||pkgLatest[color];
+    let status="AVAILABLE", branch="", customer="", txnNum="", txnType="";
+    const mohCode="MOH-"+colorUp, bmgCode="BMG-"+colorUp, fggCode="FGG-"+colorUp;
     const mohStatus = inventoryResults[mohCode] ? inventoryResults[mohCode].status : "AVAILABLE";
     status = mohStatus;
-
-    if (txn) {
-      branch = txn.branch; customer = txn.customer;
-      txnNum = txn.txnNum; txnType = txn.txnType;
-    }
-
+    if (txn) { branch=txn.branch; customer=txn.customer; txnNum=txn.txnNum; txnType=txn.txnType; }
     packageResults[colorUp] = {
-      packageColor: color,
-      status, branch, customer, txnNum, txnType,
-      moh: inventoryResults[mohCode]||null,
-      bmg: inventoryResults[bmgCode]||null,
-      fgg: inventoryResults[fggCode]||null
+      packageColor:color, status, branch, customer, txnNum, txnType,
+      moh:inventoryResults[mohCode]||null,
+      bmg:inventoryResults[bmgCode]||null,
+      fgg:inventoryResults[fggCode]||null
     };
   }
 
-  // ── Quantity dashboard ────────────────────────────────────
-  // Count qty items across all active transactions
-  const qtyRented  = {}; // name → count currently rented
-  const qtyLaundry = {}; // name → count for laundry
-
+  // ── Quantity counts ───────────────────────────────────────
+  const qtyRented={}, qtyLaundry={};
   for (const txn of transactions) {
     const pDate = txn.pickupDate ? new Date(txn.pickupDate) : null;
     const rDate = txn.returnDate ? new Date(txn.returnDate) : null;
-    if (!pDate || pDate > now) continue; // pending
-
-    for (const [name, count] of Object.entries(txn.qtyItems||{})) {
+    if (!pDate||pDate>now) continue;
+    for (const [name,count] of Object.entries(txn.qtyItems||{})) {
       if (rDate && rDate < now) {
-        // For laundry — subtract what's already in laundry sheets
-        const inLaundry = laundryQty[name] || 0;
-        const remaining = Math.max(0, count - inLaundry);
-        if (remaining > 0) qtyLaundry[name] = (qtyLaundry[name]||0) + remaining;
+        const inLaundry = laundryQty[name]||0;
+        const remaining = Math.max(0, count-inLaundry);
+        if (remaining>0) qtyLaundry[name]=(qtyLaundry[name]||0)+remaining;
       } else {
-        qtyRented[name] = (qtyRented[name]||0) + count;
+        qtyRented[name]=(qtyRented[name]||0)+count;
       }
     }
   }
-
-  // Build qty results
-  const allQtyNames = new Set([
-    ...Object.keys(qtyRented),
-    ...Object.keys(qtyLaundry)
-  ]);
+  const allQtyNames = new Set([...Object.keys(qtyRented),...Object.keys(qtyLaundry)]);
   const quantityResults = [];
   for (const name of allQtyNames) {
-    quantityResults.push({
-      name,
-      rented:   qtyRented[name]  || 0,
-      laundry:  qtyLaundry[name] || 0
-    });
+    quantityResults.push({ name, rented:qtyRented[name]||0, laundry:qtyLaundry[name]||0 });
   }
-  quantityResults.sort((a,b) => a.name.localeCompare(b.name));
+  quantityResults.sort((a,b)=>a.name.localeCompare(b.name));
 
   // ── Transaction statuses ──────────────────────────────────
   const finalTxns = transactions.map(txn => {
     const pDate = txn.pickupDate ? new Date(txn.pickupDate) : null;
-    let txnStatus = "PENDING";
-    if (pDate && pDate <= now) {
+    let txnStatus="PENDING";
+    if (pDate && pDate<=now) {
       const allDone = txn.trackedItems.every(code => {
-        const inv = inventoryResults[code];
-        return !inv || inv.status === "AVAILABLE" || inv.status === "SOLD";
+        const inv=inventoryResults[code];
+        return !inv||inv.status==="AVAILABLE"||inv.status==="SOLD";
       });
-      txnStatus = (txn.isRetail || allDone) ? "COMPLETED" : "ONGOING";
+      txnStatus = (txn.isRetail||allDone) ? "COMPLETED" : "ONGOING";
     }
     return { ...txn, txnStatus };
   });
 
   // ── Rental history per item ───────────────────────────────
-  const rentalHistory = {}; // code → [{ txnNum, customer, branch, pickupDate, returnDate, txnType }]
+  const rentalHistory={};
   for (const txn of finalTxns) {
     for (const code of txn.trackedItems) {
-      if (!rentalHistory[code]) rentalHistory[code] = [];
+      if (!rentalHistory[code]) rentalHistory[code]=[];
       rentalHistory[code].push({
-        txnNum:     txn.txnNum,
-        customer:   txn.customer,
-        branch:     txn.branch,
-        pickupDate: txn.pickupDate,
-        returnDate: txn.returnDate,
-        txnType:    txn.txnType,
-        txnStatus:  txn.txnStatus
+        txnNum:txn.txnNum, customer:txn.customer, branch:txn.branch,
+        pickupDate:txn.pickupDate, returnDate:txn.returnDate,
+        txnType:txn.txnType, txnStatus:txn.txnStatus
       });
     }
   }
 
-  return { inventoryResults, packageResults, quantityResults, transactions: finalTxns, rentalHistory };
+  return { inventoryResults, packageResults, quantityResults, transactions:finalTxns, rentalHistory };
 }
 
 // ── Dashboard ─────────────────────────────────────────────────
@@ -663,127 +610,97 @@ function buildAll() {
 function getDashboard(inventoryResults, transactions) {
   const inv = Object.values(inventoryResults);
   const counts = { total:0, available:0, released:0, forLaundry:0, sold:0, other:0 };
-  const byBranch = {};
-
   const BRANCHES = ["GORORDO","MANDAUE","TALISAY","ORMOC","TACLOBAN"];
-  for (const b of BRANCHES) {
-    byBranch[b] = { available:0, released:0, forLaundry:0, activeTxns:0 };
-  }
+  const byBranch = {};
+  for (const b of BRANCHES) byBranch[b]={ available:0, released:0, forLaundry:0, activeTxns:0 };
 
   for (const item of inv) {
     counts.total++;
-    if      (item.status === "AVAILABLE")   counts.available++;
-    else if (item.status === "RELEASED")    counts.released++;
-    else if (item.status === "FOR LAUNDRY") counts.forLaundry++;
-    else if (item.status === "SOLD" || item.status === "SOLD OUT") counts.sold++;
+    if      (item.status==="AVAILABLE")   counts.available++;
+    else if (item.status==="RELEASED")    counts.released++;
+    else if (item.status==="FOR LAUNDRY") counts.forLaundry++;
+    else if (item.status==="SOLD"||item.status==="SOLD OUT") counts.sold++;
     else counts.other++;
-
     if (item.branch && byBranch[item.branch]) {
-      if      (item.status === "AVAILABLE")   byBranch[item.branch].available++;
-      else if (item.status === "RELEASED")    byBranch[item.branch].released++;
-      else if (item.status === "FOR LAUNDRY") byBranch[item.branch].forLaundry++;
+      if      (item.status==="AVAILABLE")   byBranch[item.branch].available++;
+      else if (item.status==="RELEASED")    byBranch[item.branch].released++;
+      else if (item.status==="FOR LAUNDRY") byBranch[item.branch].forLaundry++;
     }
   }
-
-  // Active transactions per branch
   const now = today();
   for (const txn of transactions) {
-    if (txn.txnStatus === "ONGOING" && txn.branch && byBranch[txn.branch]) {
+    if (txn.txnStatus==="ONGOING" && txn.branch && byBranch[txn.branch]) {
       byBranch[txn.branch].activeTxns++;
     }
   }
-
   return { counts, byBranch };
 }
 
 // ── Photo Map ─────────────────────────────────────────────────
 
 function buildPhotoMap() {
-  const map = {}; // upperCode → [{ name, id }]
-
+  const map = {};
   function scanFolder(folder) {
     const name = folder.getName().toLowerCase();
-    if (name === "group" || name === "raw") return;
-
-    // Files in this folder
+    if (name==="group"||name==="raw") return;
     const files = folder.getFiles();
     while (files.hasNext()) {
       const file = files.next();
-      const fname = file.getName();
-      const fid   = file.getId();
-      // Strip extension
-      const baseName = fname.replace(/\.[^/.]+$/,"");
-      // Try to find item code: match pattern like BGI-10000, PGI-9244, etc.
-      // Item code = everything up to and including the base item identifier
-      // We store ALL files; matching happens on frontend
+      const baseName = file.getName().replace(/\.[^/.]+$/,"");
       const upperBase = baseName.toUpperCase();
-      map[upperBase] = map[upperBase] || [];
-      map[upperBase].push({ name: baseName, id: fid });
+      if (!map[upperBase]) map[upperBase]=[];
+      map[upperBase].push({ name:baseName, id:file.getId() });
     }
-
-    // Recurse into subfolders
     const subs = folder.getFolders();
     while (subs.hasNext()) scanFolder(subs.next());
   }
-
   try {
-    const root = DriveApp.getFolderById(DRIVE_ROOT_ID);
-    scanFolder(root);
-  } catch(e) {
-    Logger.log("Photo scan error: "+e);
-  }
-
+    scanFolder(DriveApp.getFolderById(DRIVE_ROOT_ID));
+  } catch(e) { Logger.log("Photo scan error: "+e); }
   return map;
 }
 
 // ── Web App ───────────────────────────────────────────────────
 
 function doGet(e) {
-  const path = (e.parameter && e.parameter.path) || "dashboard";
-  const code = (e.parameter && e.parameter.code) || null;
+  const path     = (e.parameter && e.parameter.path)     || "dashboard";
+  const code     = (e.parameter && e.parameter.code)     || null;
+  const callback = (e.parameter && e.parameter.callback) || null;
   let data;
 
   try {
-    if (path === "photos") {
+    if (path==="photos") {
       data = buildPhotoMap();
     } else {
       const built = buildAll();
-
-      if (path === "inventory") {
-        data = Object.values(built.inventoryResults);
-      } else if (path === "transactions") {
-        data = built.transactions;
-      } else if (path === "packages") {
-        data = Object.values(built.packageResults);
-      } else if (path === "quantity") {
-        data = built.quantityResults;
-      } else if (path === "item" && code) {
+      if      (path==="inventory")    data = Object.values(built.inventoryResults);
+      else if (path==="transactions") data = built.transactions;
+      else if (path==="packages")     data = Object.values(built.packageResults);
+      else if (path==="quantity")     data = built.quantityResults;
+      else if (path==="item" && code) {
         const upperCode = code.toUpperCase();
         const item = built.inventoryResults[upperCode];
-        const history = built.rentalHistory[upperCode] || [];
+        const history = built.rentalHistory[upperCode]||[];
         data = item ? { ...item, history } : null;
       } else {
-        // dashboard
         data = getDashboard(built.inventoryResults, built.transactions);
       }
     }
   } catch(err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ ok:false, error: err.toString() }))
+    const errOut = JSON.stringify({ ok:false, error:err.toString() });
+    if (callback) {
+      return ContentService.createTextOutput(callback+"("+errOut+")")
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return ContentService.createTextOutput(errOut)
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  const callback = e.parameter && e.parameter.callback;
-  const output = JSON.stringify({ ok: true, data });
-
+  const output = JSON.stringify({ ok:true, data });
   if (callback) {
-    // JSONP response — wraps JSON in a function call
-    return ContentService
-      .createTextOutput(callback + "(" + output + ")")
+    return ContentService.createTextOutput(callback+"("+output+")")
       .setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
-
-  return ContentService
-    .createTextOutput(output)
+  return ContentService.createTextOutput(output)
     .setMimeType(ContentService.MimeType.JSON);
 }
