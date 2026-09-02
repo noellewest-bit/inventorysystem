@@ -211,7 +211,11 @@ function extractFromOrderSummary(text, txnType) {
     return { tracked, qty, packageColor, packageType, isRetail: false };
   }
 
-  // ── NEW RENTAL FORMAT: "ITEM xN ₱price" ──
+  // ── NEW RENTAL FORMAT ──
+  // Formats seen:
+  // "PGI-9497    ₱1,800.00 (First User)"   — tracked item, no x1
+  // "COAT BARONG - M    x1    ₱900.00"     — qty item with x1
+  // "POLO-M    x2    ₱400.00"              — qty item with count
   if (isNewRental && !isPackage) {
     for (const line of lines) {
       if (/^RENTAL ITEMS/i.test(line)) continue;
@@ -221,34 +225,45 @@ function extractFromOrderSummary(text, txnType) {
       if (/^Amount Paid/i.test(line)) continue;
       if (/^Remaining Balance/i.test(line)) continue;
       if (/^-{5,}/.test(line)) continue;
+      if (!line.includes("₱")) continue; // skip lines without price
 
-      // Has "/" = tracked add-on: "BGI/BGI-9343 x1 ₱price"
+      // Has "/" = add-on: "BGI/BGI-9343 x1 ₱price"
       if (line.includes("/")) {
         const slashIdx = line.indexOf("/");
-        const afterSlash = line.substring(slashIdx+1);
-        const cm = afterSlash.match(/^([^\s₱]+)/);
+        const afterSlash = line.substring(slashIdx+1).trim();
+        const cm = afterSlash.match(/^([^\s₱x]+)/i);
         if (cm) {
           const code = normCode(cm[1]);
-          if (isTrackedCode(code)) {
-            tracked.push(code);
-          } else {
-            const qm = afterSlash.match(/x(\d+)/i);
-            qty[code] = (qty[code]||0) + (qm ? parseInt(qm[1]) : 1);
-          }
+          const qm   = afterSlash.match(/x\s*(\d+)/i);
+          const count = qm ? parseInt(qm[1]) : 1;
+          if (isTrackedCode(code)) tracked.push(code);
+          else qty[code] = (qty[code]||0) + count;
         }
         continue;
       }
 
-      // "COAT BARONG - M x1 ₱900.00"
-      // Extract: everything before the last "x\d" pattern
-      const qm = line.match(/^(.+?)\s+x(\d+)\s*₱/i);
-      if (qm) {
-        const name = qm[1].trim().toUpperCase();
-        const count = parseInt(qm[2]) || 1;
+      // Check if line has "xN" quantity marker before the ₱
+      const beforePrice = line.split("₱")[0].trim();
+      const xMatch = beforePrice.match(/^(.+?)\s+x\s*(\d+)\s*$/i);
+
+      if (xMatch) {
+        // "COAT BARONG - M x1" or "POLO-M x2"
+        const name  = xMatch[1].trim().toUpperCase();
+        const count = parseInt(xMatch[2]) || 1;
         if (isTrackedCode(name)) {
-          for (let i=0;i<count;i++) tracked.push(name);
+          for (let i = 0; i < count; i++) tracked.push(name);
         } else {
           qty[name] = (qty[name]||0) + count;
+        }
+      } else {
+        // No xN — just "PGI-9497    ₱1,800.00 (First User)"
+        // Extract everything before the ₱, strip trailing spaces
+        const name = beforePrice.replace(/\s+$/, "").toUpperCase();
+        if (!name) continue;
+        if (isTrackedCode(name)) {
+          tracked.push(name);
+        } else {
+          qty[name] = (qty[name]||0) + 1;
         }
       }
     }
@@ -716,45 +731,126 @@ function buildPhotoMap() {
   return map;
 }
 
+// ── Cache Helpers ────────────────────────────────────────────
+// Cache duration in seconds. 300 = 5 minutes.
+// Increase to 3600 (1hr) if data changes less frequently.
+const CACHE_TTL = 300;
+
+function getCached(key) {
+  try {
+    const cache = CacheService.getScriptCache();
+    // Large payloads are chunked across multiple cache keys
+    const meta = cache.get(key + "_meta");
+    if (!meta) return null;
+    const { chunks } = JSON.parse(meta);
+    let joined = "";
+    for (let i = 0; i < chunks; i++) {
+      const chunk = cache.get(key + "_chunk_" + i);
+      if (!chunk) return null; // chunk expired
+      joined += chunk;
+    }
+    return joined;
+  } catch(e) {
+    Logger.log("getCached error: " + e);
+    return null;
+  }
+}
+
+function setCached(key, jsonString) {
+  try {
+    const cache = CacheService.getScriptCache();
+    // Cache entries max 100KB each — chunk large payloads
+    const CHUNK_SIZE = 90000;
+    const chunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+    const entries = { [key + "_meta"]: JSON.stringify({ chunks }) };
+    for (let i = 0; i < chunks; i++) {
+      entries[key + "_chunk_" + i] = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    }
+    cache.putAll(entries, CACHE_TTL);
+  } catch(e) {
+    Logger.log("setCached error: " + e);
+  }
+}
+
+function clearAllCaches() {
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.removeAll(["nw_all", "nw_all_meta", "nw_photos", "nw_photos_meta"]);
+    // Also remove chunks
+    for (let i = 0; i < 50; i++) {
+      cache.remove("nw_all_chunk_" + i);
+      cache.remove("nw_photos_chunk_" + i);
+    }
+  } catch(e) {}
+}
+
 // ── Web App ───────────────────────────────────────────────────
 
 function doGet(e) {
   const path     = (e.parameter && e.parameter.path)     || "dashboard";
   const code     = (e.parameter && e.parameter.code)     || null;
   const callback = (e.parameter && e.parameter.callback) || null;
+  const bust     = (e.parameter && e.parameter.bust)     || null; // cache buster
   let data;
 
   try {
-    if (path==="photos") {
-      data = buildPhotoMap();
+    if (path === "clearcache") {
+      clearAllCaches();
+      data = { cleared: true };
+    } else if (path === "photos") {
+      // Photos have their own cache key
+      let photoCached = bust ? null : getCached("nw_photos");
+      if (photoCached) {
+        data = JSON.parse(photoCached);
+      } else {
+        data = buildPhotoMap();
+        setCached("nw_photos", JSON.stringify(data));
+      }
     } else {
-      const built = buildAll();
-      if      (path==="inventory")    data = Object.values(built.inventoryResults);
-      else if (path==="transactions") data = built.transactions;
-      else if (path==="packages")     data = Object.values(built.packageResults);
-      else if (path==="quantity")     data = built.quantityResults;
-      else if (path==="item" && code) {
+      // All inventory/transaction data shares one cache key
+      let allCached = bust ? null : getCached("nw_all");
+      let built;
+      if (allCached) {
+        built = JSON.parse(allCached);
+      } else {
+        built = buildAll();
+        // Store serialisable version
+        const serialised = {
+          inventoryResults: built.inventoryResults,
+          packageResults:   built.packageResults,
+          quantityResults:  built.quantityResults,
+          transactions:     built.transactions,
+          rentalHistory:    built.rentalHistory
+        };
+        setCached("nw_all", JSON.stringify(serialised));
+      }
+
+      if      (path === "inventory")    data = Object.values(built.inventoryResults);
+      else if (path === "transactions") data = built.transactions;
+      else if (path === "packages")     data = Object.values(built.packageResults);
+      else if (path === "quantity")     data = built.quantityResults;
+      else if (path === "item" && code) {
         const upperCode = code.toUpperCase();
         const item = built.inventoryResults[upperCode];
-        const history = built.rentalHistory[upperCode]||[];
+        const history = (built.rentalHistory||{})[upperCode] || [];
         data = item ? { ...item, history } : null;
       } else {
         data = getDashboard(built.inventoryResults, built.transactions);
       }
     }
   } catch(err) {
-    const errOut = JSON.stringify({ ok:false, error:err.toString() });
+    const errOut = JSON.stringify({ ok: false, error: err.toString() });
     if (callback) {
-      return ContentService.createTextOutput(callback+"("+errOut+")")
+      return ContentService.createTextOutput(callback + "(" + errOut + ")")
         .setMimeType(ContentService.MimeType.JAVASCRIPT);
     }
     return ContentService.createTextOutput(errOut)
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  const output = JSON.stringify({ ok:true, data });
+  const output = JSON.stringify({ ok: true, data });
   if (callback) {
-    return ContentService.createTextOutput(callback+"("+output+")")
+    return ContentService.createTextOutput(callback + "(" + output + ")")
       .setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   return ContentService.createTextOutput(output)

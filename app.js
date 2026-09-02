@@ -52,6 +52,9 @@ async function api(path, extraParams = {}) {
 async function refreshAll() {
   setLoading(true);
   try {
+    // Bust server-side cache so fresh data is read from Sheets
+    await api("clearcache").catch(()=>{});
+
     const [inv, txns, pkgs, qty, dash] = await Promise.all([
       api("inventory"),
       api("transactions"),
@@ -83,16 +86,15 @@ async function refreshAll() {
 
 async function loadPhotos() {
   try {
-    // Photos always fetched fresh — never cached — so new uploads appear immediately
     State.photos = await api("photos");
-    // Re-render if a drawer is open showing photos
+    // If a drawer is open on the photos tab, refresh it automatically
     const openTab = document.querySelector(".drawer-tab.active");
     if (openTab && openTab.dataset.tab === "photos") {
       const titleEl = document.getElementById("drawerTitle");
       if (titleEl && titleEl.textContent) {
-        const code = titleEl.textContent;
-        const photoDiv = document.getElementById("drawerTab-photos");
-        if (photoDiv) photoDiv.innerHTML = photoGalleryHTML(code);
+        const code = titleEl.textContent.trim();
+        const containers = document.querySelectorAll("[id^='photoGalleryContent-']");
+        containers.forEach(c => { c.innerHTML = photoGalleryHTML(code); });
       }
     }
   } catch(e) {
@@ -436,7 +438,9 @@ function showItemDrawer(code) {
     </div>
 
     <div id="drawerTab-photos" style="display:none">
-      ${photoGalleryHTML(item.code)}
+      <div id="photoGalleryContent-${esc(item.code)}">
+        ${Object.keys(State.photos).length > 0 ? photoGalleryHTML(item.code) : '<p style="color:var(--mist);font-size:.8rem">Photos loading… click Photos tab again if empty.</p>'}
+      </div>
     </div>
 
     <div id="drawerTab-history" style="display:none">
@@ -458,6 +462,19 @@ function switchDrawerTab(tab) {
     const el=document.getElementById("drawerTab-"+t);
     if(el) el.style.display = t===tab?"block":"none";
   });
+  // When switching to photos tab, always refresh the gallery
+  if (tab === "photos") {
+    const titleEl = document.getElementById("drawerTitle");
+    if (titleEl) {
+      const code = titleEl.textContent.trim();
+      const containers = document.querySelectorAll("[id^='photoGalleryContent-']");
+      containers.forEach(c => {
+        c.innerHTML = Object.keys(State.photos).length > 0
+          ? photoGalleryHTML(code)
+          : "<p style='color:var(--mist);font-size:.8rem'>Photos still loading — try again in a moment.</p>";
+      });
+    }
+  }
 }
 
 function initInventoryPage() {
