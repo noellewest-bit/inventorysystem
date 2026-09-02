@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quantity — Noelle West</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>window.NW_GAS_URL = "";</script>
+</head>
+<body data-page="quantity">
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <p class="loading-text">LOADING DATA…</p>
+  </div>
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
+  <div class="layout">
+    <nav class="sidebar">
+      <div class="sidebar-brand"><div class="brand-name">Noelle West</div><div class="brand-sub">Inventory Tracker</div></div>
+      <div class="sidebar-nav">
+        <div class="nav-section-label">Overview</div>
+        <a href="index.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+        <div class="nav-section-label">Tracking</div>
+        <a href="inventory.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 3H8L6 7h12l-2-4z"/></svg>Inventory</a>
+        <a href="transactions.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="2"/><path d="M9 12h6M9 16h4"/></svg>Transactions</a>
+        <a href="packages.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Packages</a>
+        <a href="quantity.html" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Quantity</a>
+        <div class="nav-section-label">Search</div>
+        <a href="search.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Item Lookup</a>
+      </div>
+      <div class="sidebar-footer"><div class="last-updated" id="lastUpdated">Not yet synced</div></div>
+    </nav>
+    <div class="main">
+  <header class="topbar">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="hamburger" id="hamburger">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span class="topbar-title">Quantity</span>
+      </div>
+      <div class="topbar-right">
+        <button class="btn-refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+    </header>
+      <div class="page-content">
+      <div class="config-banner" style="display:none">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div><strong>Setup required:</strong> Set <code>window.NW_GAS_URL</code> in each HTML file. See <code>README.md</code>.</div>
+      </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="qtySearch" class="search-input" placeholder="Search item name…">
+          </div>
+          <select id="qtyFilterCat" class="filter-select">
+            <option value="">All Categories</option>
+            <option value="POLO">Polo</option>
+            <option value="PANTS">Pants</option>
+            <option value="VST">VST</option>
+            <option value="BPO">BPO</option>
+            <option value="BCPO">BCPO</option>
+            <option value="BPS">BPS</option>
+            <option value="BPOL">BPOL</option>
+            <option value="COAT BARONG">Coat Barong</option>
+            <option value="BCC">BCC</option>
+            <option value="BPOC">BPOC</option>
+            <option value="BOY">BOY</option>
+            <option value="BPSC">BPSC</option>
+            <option value="ACC">ACC</option>
+            <option value="PEN">PEN</option>
+            <option value="PET">PET</option>
+            <option value="S-UPPER">S-UPPER</option>
+          </select>
+        </div>
+        <div class="table-card">
+          <div class="table-header"><span class="table-title">Quantity-Based Items</span><span class="table-count" id="qtyCount">—</span></div>
+          <div class="table-wrap">
+            <table id="qtyTable">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th style="color:var(--status-released)">Currently Rented</th>
+                  <th style="color:var(--status-laundry)">For Laundry</th>
+                </tr>
+              </thead>
+              <tbody id="qtyBody"><tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Click Refresh to load quantity data.</p></div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="qtyPagination"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="drawerOverlay" class="drawer-overlay"></div>
+  <div id="drawer" class="drawer">
+    <div class="drawer-top">
+      <div>
+        <div class="drawer-title" id="drawerTitle"></div>
+        <div class="drawer-sub" id="drawerSub"></div>
+      </div>
+      <button class="btn-close" id="drawerClose">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+  <div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
