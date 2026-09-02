@@ -83,7 +83,18 @@ async function refreshAll() {
 
 async function loadPhotos() {
   try {
+    // Photos always fetched fresh — never cached — so new uploads appear immediately
     State.photos = await api("photos");
+    // Re-render if a drawer is open showing photos
+    const openTab = document.querySelector(".drawer-tab.active");
+    if (openTab && openTab.dataset.tab === "photos") {
+      const titleEl = document.getElementById("drawerTitle");
+      if (titleEl && titleEl.textContent) {
+        const code = titleEl.textContent;
+        const photoDiv = document.getElementById("drawerTab-photos");
+        if (photoDiv) photoDiv.innerHTML = photoGalleryHTML(code);
+      }
+    }
   } catch(e) {
     console.warn("Could not load photos:", e);
   }
@@ -92,6 +103,7 @@ async function loadPhotos() {
 // ── Cache ─────────────────────────────────────────────────────
 function saveCache() {
   try {
+    // Photos intentionally excluded from cache so they always load fresh
     sessionStorage.setItem("nw_v4", JSON.stringify({
       inventory: State.inventory, transactions: State.transactions,
       packages: State.packages, quantity: State.quantity,
@@ -144,9 +156,9 @@ function statusBadge(status) {
     "FOR LAUNDRY":              "laundry",
     "SOLD":                     "sold",
     "SOLD OUT":                 "sold",
-    "ONGOING":                  "ongoing",
-    "COMPLETED":                "completed",
+    "FOR PICKUP":               "pickup",
     "PENDING":                  "pending",
+    "COMPLETED":                "completed",
     "MISSING":                  "missing",
     "DAMAGE":                   "damage",
     "SLIGHTLY DAMAGE":          "damage",
@@ -180,17 +192,20 @@ function fmtWeight(w) {
 
 // ── Photos ────────────────────────────────────────────────────
 function getPhotosForItem(code) {
-  // Find all photos whose filename starts with the item code (case-insensitive)
-  const upper = (code||"").toUpperCase();
+  if (!code || !State.photos) return [];
+  const upper = code.toUpperCase().trim();
+  // Escape special regex chars in item code
+  const escaped = upper.replace(/[-\/\^$*+?.()|[\]{}]/g, '\$&');
+  // Match filenames that start with the item code, followed by end, -, b, c (variants), _ or space
+  const regex = new RegExp('^' + escaped + '(-|_|\s|[a-zA-Z]$|$)', 'i');
   const results = [];
   for (const [key, photos] of Object.entries(State.photos)) {
-    // key is the uppercased filename (without extension)
-    // Match: key starts with upper, followed by end, -, _, or space
-    const regex = new RegExp(`^${upper.replace(/[-\/\\^$*+?.()|[\]{}]/g,'\\$&')}(-|_|\\s|$)`, 'i');
     if (regex.test(key)) {
       for (const p of photos) results.push(p);
     }
   }
+  // Sort by name for consistent ordering
+  results.sort((a,b) => a.name.localeCompare(b.name));
   return results;
 }
 
@@ -354,7 +369,7 @@ function filterInv() {
   if (InvSt.branch)   data=data.filter(i=>i.branch===InvSt.branch);
   if (InvSt.category) data=data.filter(i=>i.category===InvSt.category);
   if (InvSt.sortCol>=0) {
-    const keys=["code","category","status","branch","txnNum","weight"];
+    const keys=["code","category","status","branch","firstUser","rentalRate","retailPrice","weight"];
     const key=keys[InvSt.sortCol];
     data=[...data].sort((a,b)=>String(a[key]||"").localeCompare(String(b[key]||""),undefined,{numeric:true})*InvSt.sortDir);
   }
@@ -378,7 +393,9 @@ function renderInventory(sortCol, sortDir) {
         <td class="td-cat">${esc(i.category)}</td>
         <td>${statusBadge(i.status)}</td>
         <td>${esc(i.branch)||"—"}</td>
-        <td class="td-txn">${esc(i.txnNum)||"—"}</td>
+        <td style="font-size:.78rem">${esc(i.firstUser)||"—"}</td>
+        <td style="font-family:var(--ff-mono);font-size:.75rem">${esc(i.rentalRate)||"—"}</td>
+        <td style="font-family:var(--ff-mono);font-size:.75rem">${esc(i.retailPrice)||"—"}</td>
         <td style="font-family:var(--ff-mono);font-size:.72rem">${fmtWeight(i.weight)}</td>
       </tr>`).join("");
     tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showItemDrawer(r.dataset.code)));
@@ -389,42 +406,58 @@ function renderInventory(sortCol, sortDir) {
 function showItemDrawer(code) {
   const item = State.inventory.find(i=>i.code===code);
   if (!item) return;
-  const history = State.transactions
-    .filter(t=>(t.trackedItems||[]).includes(code))
-    .map(t=>`<tr>
-      <td class="td-txn">${esc(t.txnNum)}</td>
-      <td>${esc(t.customer)}</td>
-      <td>${esc(t.branch)||"—"}</td>
-      <td>${fmtDate(t.pickupDate)}</td>
-      <td>${fmtDate(t.returnDate)}</td>
-      <td>${statusBadge(t.txnStatus)}</td>
-    </tr>`).join("");
+  const txnHistory = State.transactions.filter(t=>(t.trackedItems||[]).includes(code))
+    .sort((a,b)=> new Date(b.pickupDate||0) - new Date(a.pickupDate||0));
+  const histRows = txnHistory.map(t=>`<tr>
+    <td class="td-txn">${esc(t.txnNum)}</td>
+    <td>${esc(t.customer)}</td>
+    <td>${esc(t.branch)||"—"}</td>
+    <td>${fmtDate(t.pickupDate)}</td>
+    <td>${fmtDate(t.returnDate)}</td>
+    <td>${statusBadge(t.txnStatus)}</td>
+  </tr>`).join("");
 
   const html = `
-    <div class="detail-row"><span class="detail-label">Code</span><span class="detail-value td-code">${esc(item.code)}</span></div>
-    <div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">${esc(item.category)}</span></div>
-    <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(item.status)}</span></div>
-    <div class="detail-row"><span class="detail-label">Branch</span><span class="detail-value">${esc(item.branch)||"—"}</span></div>
-    <div class="detail-row"><span class="detail-label">Weight</span><span class="detail-value">${fmtWeight(item.weight)}</span></div>
-    <div class="detail-row"><span class="detail-label">Customer</span><span class="detail-value">${esc(item.customer)||"—"}</span></div>
-    <div class="detail-row"><span class="detail-label">Transaction</span><span class="detail-value td-txn">${esc(item.txnNum)||"—"}</span></div>
-    <div class="detail-row"><span class="detail-label">Pickup</span><span class="detail-value">${fmtDate(item.pickupDate)}</span></div>
-    <div class="detail-row"><span class="detail-label">Return</span><span class="detail-value">${fmtDate(item.returnDate)}</span></div>
-    <div style="margin-top:20px">
-      <div style="font-family:var(--ff-mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:10px">Photos</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--cloud);padding-bottom:12px">
+      <button class="drawer-tab active" data-tab="info" onclick="switchDrawerTab('info')">Info</button>
+      <button class="drawer-tab" data-tab="photos" onclick="switchDrawerTab('photos')">Photos</button>
+      <button class="drawer-tab" data-tab="history" onclick="switchDrawerTab('history')">Transactions (${txnHistory.length})</button>
+    </div>
+
+    <div id="drawerTab-info">
+      <div class="detail-row"><span class="detail-label">Code</span><span class="detail-value td-code">${esc(item.code)}</span></div>
+      <div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">${esc(item.category)}</span></div>
+      <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(item.status)}</span></div>
+      <div class="detail-row"><span class="detail-label">Branch</span><span class="detail-value">${esc(item.branch)||"—"}</span></div>
+      <div class="detail-row"><span class="detail-label">First User</span><span class="detail-value">${esc(item.firstUser)||"—"}</span></div>
+      <div class="detail-row"><span class="detail-label">Rental Rate</span><span class="detail-value">${esc(item.rentalRate)||"—"}</span></div>
+      <div class="detail-row"><span class="detail-label">Retail Price</span><span class="detail-value">${esc(item.retailPrice)||"—"}</span></div>
+      <div class="detail-row"><span class="detail-label">Weight</span><span class="detail-value">${fmtWeight(item.weight)}</span></div>
+    </div>
+
+    <div id="drawerTab-photos" style="display:none">
       ${photoGalleryHTML(item.code)}
     </div>
-    ${history ? `
-    <div style="margin-top:20px">
-      <div style="font-family:var(--ff-mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:10px">Rental History</div>
-      <div style="overflow-x:auto">
+
+    <div id="drawerTab-history" style="display:none">
+      ${histRows ? `<div style="overflow-x:auto">
         <table class="history-table">
-          <thead><tr><th>Transaction</th><th>Customer</th><th>Branch</th><th>Pickup</th><th>Return</th><th>Status</th></tr></thead>
-          <tbody>${history}</tbody>
+          <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Pickup</th><th>Return</th><th>Status</th></tr></thead>
+          <tbody>${histRows}</tbody>
         </table>
-      </div>
-    </div>` : ""}`;
+      </div>` : '<p style="color:var(--mist);font-size:.8rem">No transactions recorded</p>'}
+    </div>`;
   openDrawer(html, item.code, item.category);
+}
+
+function switchDrawerTab(tab) {
+  document.querySelectorAll(".drawer-tab").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab===tab);
+  });
+  ["info","photos","history"].forEach(t=>{
+    const el=document.getElementById("drawerTab-"+t);
+    if(el) el.style.display = t===tab?"block":"none";
+  });
 }
 
 function initInventoryPage() {
@@ -796,6 +829,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (GAS_URL) {
+    // Load photos immediately in background on every page load
+    loadPhotos();
+
     await refreshAll();
     if (!cached) {
       const page=document.body.dataset.page;
@@ -806,6 +842,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();
     }
+
+    // Reload photos every 5 minutes automatically
+    setInterval(loadPhotos, 5 * 60 * 1000);
   } else {
     renderCurrentPage();
   }

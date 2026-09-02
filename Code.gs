@@ -99,16 +99,25 @@ function getMasterInventory() {
     const vals = sh.getDataRange().getValues();
     if (vals.length < 2) continue;
     const header = vals[0].map(h => (h||"").toString().toUpperCase().trim());
-    const statusIdx = header.lastIndexOf("STATUS");
-    const displayCat = shName === "PET-#" ? "PET" : shName;
+    const statusIdx    = header.lastIndexOf("STATUS");
+    const firstUserIdx = header.indexOf("FIRST USER");
+    const rentalIdx    = header.indexOf("RENTAL RATE");
+    const retailIdx    = header.indexOf("RETAIL PRICE");
+    // Weight: find first KG/KILO column
+    const weightIdx    = header.findIndex(h => h.includes("KILO") || h.includes("KG") || h === "KILOGRAM/S");
+    const displayCat   = shName === "PET-#" ? "PET" : shName;
 
     for (let r = 1; r < vals.length; r++) {
       const row = vals[r];
       const code = normCode(row[0]);
       if (!code) continue;
-      const branch = (row[1]||"").toString().trim().toUpperCase();
-      const masterStatus = statusIdx >= 0 ? (row[statusIdx]||"").toString().trim().toUpperCase() : "";
-      inventory[code] = { category: displayCat, branch, masterStatus, weight: null, colorTracked: false };
+      const branch       = (row[1]||"").toString().trim().toUpperCase();
+      const masterStatus = statusIdx    >= 0 ? (row[statusIdx]||"").toString().trim().toUpperCase() : "";
+      const firstUser    = firstUserIdx >= 0 ? (row[firstUserIdx]||"").toString().trim() : "";
+      const rentalRate   = rentalIdx    >= 0 ? (row[rentalIdx]||"").toString().trim() : "";
+      const retailPrice  = retailIdx    >= 0 ? (row[retailIdx]||"").toString().trim() : "";
+      const sheetWeight  = weightIdx    >= 0 && row[weightIdx] ? parseFloat(row[weightIdx]) : null;
+      inventory[code] = { category: displayCat, branch, masterStatus, weight: sheetWeight, colorTracked: false, firstUser, rentalRate, retailPrice };
     }
   }
 
@@ -469,6 +478,12 @@ function getTransactions() {
       orderSummary // include raw text for display
     });
   }
+  // Sort most recent first (by pickup date descending)
+  txns.sort((a, b) => {
+    const da = a.pickupDate ? new Date(a.pickupDate) : new Date(0);
+    const db = b.pickupDate ? new Date(b.pickupDate) : new Date(0);
+    return db - da;
+  });
   return txns;
 }
 
@@ -547,7 +562,10 @@ function buildAll() {
     inventoryResults[code] = {
       code, category:meta.category, status, branch,
       customer, txnNum, pickupDate, returnDate, weight,
-      colorTracked:meta.colorTracked||false, qty:meta.qty||null
+      colorTracked:meta.colorTracked||false, qty:meta.qty||null,
+      firstUser:  meta.firstUser  ||"",
+      rentalRate: meta.rentalRate ||"",
+      retailPrice:meta.retailPrice||""
     };
   }
 
@@ -595,13 +613,18 @@ function buildAll() {
   // ── Transaction statuses ──────────────────────────────────
   const finalTxns = transactions.map(txn => {
     const pDate = txn.pickupDate ? new Date(txn.pickupDate) : null;
-    let txnStatus="PENDING";
-    if (pDate && pDate<=now) {
-      const allDone = txn.trackedItems.every(code => {
-        const inv=inventoryResults[code];
-        return !inv||inv.status==="AVAILABLE"||inv.status==="SOLD";
-      });
-      txnStatus = (txn.isRetail||allDone) ? "COMPLETED" : "ONGOING";
+    const rDate = txn.returnDate ? new Date(txn.returnDate) : null;
+    let txnStatus = "FOR PICKUP";
+
+    if (txn.isRetail) {
+      // Retail: completed once pickup date passed or no pickup date
+      txnStatus = (!pDate || pDate <= now) ? "COMPLETED" : "FOR PICKUP";
+    } else if (!pDate || pDate > now) {
+      txnStatus = "FOR PICKUP";
+    } else if (pDate <= now && (!rDate || rDate >= now)) {
+      txnStatus = "PENDING";
+    } else if (rDate && rDate < now) {
+      txnStatus = "COMPLETED";
     }
     return { ...txn, txnStatus };
   });
@@ -656,24 +679,40 @@ function getDashboard(inventoryResults, transactions) {
 // ── Photo Map ─────────────────────────────────────────────────
 
 function buildPhotoMap() {
-  const map = {};
-  function scanFolder(folder) {
-    const name = folder.getName().toLowerCase();
-    if (name==="group"||name==="raw") return;
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const file = files.next();
-      const baseName = file.getName().replace(/\.[^/.]+$/,"");
-      const upperBase = baseName.toUpperCase();
-      if (!map[upperBase]) map[upperBase]=[];
-      map[upperBase].push({ name:baseName, id:file.getId() });
-    }
-    const subs = folder.getFolders();
-    while (subs.hasNext()) scanFolder(subs.next());
+  const map = {}; // UPPER_FILENAME_NO_EXT → [{ name, id }]
+
+  function addFile(file) {
+    const fullName = file.getName();
+    const baseName = fullName.replace(/\.[^/.]+$/, "");
+    const upperBase = baseName.toUpperCase().trim();
+    if (!upperBase) return;
+    // Only add image files
+    const mime = file.getMimeType();
+    if (!mime.startsWith("image/")) return;
+    if (!map[upperBase]) map[upperBase] = [];
+    map[upperBase].push({ name: baseName, id: file.getId() });
   }
+
+  function scanFolder(folder, depth) {
+    if (depth > 20) return; // safety limit — 20 levels deep is more than enough
+    const name = folder.getName().toLowerCase();
+    if (name === "group") return; // skip group folder
+
+    // Scan files in this folder
+    const files = folder.getFiles();
+    while (files.hasNext()) addFile(files.next());
+
+    // Recurse into subfolders
+    const subs = folder.getFolders();
+    while (subs.hasNext()) scanFolder(subs.next(), depth + 1);
+  }
+
   try {
-    scanFolder(DriveApp.getFolderById(DRIVE_ROOT_ID));
-  } catch(e) { Logger.log("Photo scan error: "+e); }
+    const root = DriveApp.getFolderById(DRIVE_ROOT_ID);
+    scanFolder(root, 0);
+  } catch(e) {
+    Logger.log("Photo scan error: " + e);
+  }
   return map;
 }
 

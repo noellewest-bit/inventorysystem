@@ -118,6 +118,23 @@ input, select { font-family: var(--ff-body); }
 .badge-missing    { background: #fce8e8; color: var(--status-missing); }
 .badge-damage     { background: #fff3e0; color: var(--status-damage); }
 .badge-severance  { background: #f3e8ff; color: var(--status-severance); }
+.badge-pickup     { background: #e8eaf8; color: #3949ab; }
+
+/* ── Drawer Tabs ── */
+.drawer-tab {
+  padding: 6px 14px;
+  background: none;
+  border: 1px solid var(--cloud);
+  border-radius: var(--radius-sm);
+  font-family: var(--ff-mono);
+  font-size: .68rem;
+  letter-spacing: .05em;
+  color: var(--smoke);
+  cursor: pointer;
+  transition: all .15s;
+}
+.drawer-tab:hover { border-color: var(--blush); color: var(--blush-deep); }
+.drawer-tab.active { background: var(--blush); border-color: var(--blush); color: var(--white); }
 
 /* ── Toolbar ── */
 .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
