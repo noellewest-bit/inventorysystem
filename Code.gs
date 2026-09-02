@@ -773,7 +773,17 @@ function doGet(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
+  const callback = e.parameter && e.parameter.callback;
+  const output = JSON.stringify({ ok: true, data });
+
+  if (callback) {
+    // JSONP response — wraps JSON in a function call
+    return ContentService
+      .createTextOutput(callback + "(" + output + ")")
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
   return ContentService
-    .createTextOutput(JSON.stringify({ ok:true, data }))
+    .createTextOutput(output)
     .setMimeType(ContentService.MimeType.JSON);
 }

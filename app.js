@@ -21,11 +21,32 @@ async function api(path, extraParams = {}) {
   if (!GAS_URL) throw new Error("GAS_URL not configured. See README.");
   let url = `${GAS_URL}?path=${path}`;
   for (const [k,v] of Object.entries(extraParams)) url += `&${k}=${encodeURIComponent(v)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || "API error");
-  return json.data;
+
+  // Use JSONP to bypass CORS restrictions with Google Apps Script
+  return new Promise((resolve, reject) => {
+    const cbName = "nw_cb_" + Math.random().toString(36).slice(2);
+    const script  = document.createElement("script");
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Request timed out"));
+    }, 30000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    window[cbName] = function(json) {
+      cleanup();
+      if (!json.ok) reject(new Error(json.error || "API error"));
+      else resolve(json.data);
+    };
+
+    script.src = url + "&callback=" + cbName;
+    script.onerror = () => { cleanup(); reject(new Error("Script load failed — check GAS URL and deployment")); };
+    document.head.appendChild(script);
+  });
 }
 
 async function refreshAll() {
