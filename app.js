@@ -22,39 +22,46 @@ async function api(path, extraParams = {}) {
   let url = `${GAS_URL}?path=${path}`;
   for (const [k,v] of Object.entries(extraParams)) url += `&${k}=${encodeURIComponent(v)}`;
 
-  // Use JSONP to bypass CORS restrictions with Google Apps Script
-  return new Promise((resolve, reject) => {
-    const cbName = "nw_cb_" + Math.random().toString(36).slice(2);
-    const script  = document.createElement("script");
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error("Request timed out"));
-    }, 30000);
+  // Try fetch first, fall back to JSONP if blocked
+  try {
+    const res = await fetch(url, { redirect: "follow" });
+    const text = await res.text();
+    if (text.trim().startsWith("<")) throw new Error("HTML response");
+    const json = JSON.parse(text);
+    if (!json.ok) throw new Error(json.error || "API error");
+    return json.data;
+  } catch(fetchErr) {
+    // Fallback: JSONP
+    return new Promise((resolve, reject) => {
+      const cbName = "nw_cb_" + Math.random().toString(36).slice(2);
+      const script  = document.createElement("script");
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("Request timed out after 30s"));
+      }, 30000);
 
-    function cleanup() {
-      clearTimeout(timeout);
-      delete window[cbName];
-      if (script.parentNode) script.parentNode.removeChild(script);
-    }
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
 
-    window[cbName] = function(json) {
-      cleanup();
-      if (!json.ok) reject(new Error(json.error || "API error"));
-      else resolve(json.data);
-    };
+      window[cbName] = function(json) {
+        cleanup();
+        if (!json.ok) reject(new Error(json.error || "API error"));
+        else resolve(json.data);
+      };
 
-    script.src = url + "&callback=" + cbName;
-    script.onerror = () => { cleanup(); reject(new Error("Script load failed — check GAS URL and deployment")); };
-    document.head.appendChild(script);
-  });
+      script.src = url + "&callback=" + cbName;
+      script.onerror = () => { cleanup(); reject(new Error("Script load failed — check GAS URL and deployment")); };
+      document.head.appendChild(script);
+    });
+  }
 }
 
 async function refreshAll() {
   setLoading(true);
   try {
-    // Bust server-side cache so fresh data is read from Sheets
-    await api("clearcache").catch(()=>{});
-
     const [inv, txns, pkgs, qty, dash] = await Promise.all([
       api("inventory"),
       api("transactions"),
