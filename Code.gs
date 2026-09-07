@@ -231,7 +231,7 @@ function extractFromOrderSummary(text, txnType) {
       if (line.includes("/")) {
         const slashIdx = line.indexOf("/");
         const afterSlash = line.substring(slashIdx+1).trim();
-        const cm = afterSlash.match(/^([^\s₱x]+)/i);
+        const cm = afterSlash.match(/^([^\sx]+)/i);
         if (cm) {
           const code = normCode(cm[1]);
           const qm   = afterSlash.match(/x\s*(\d+)/i);
@@ -323,7 +323,7 @@ function extractFromOrderSummary(text, txnType) {
         const prefix   = line.substring(0, slashIdx).trim().toUpperCase();
         const afterSlash = line.substring(slashIdx+1).trim();
         // Extract code before "x\d" or "₱"
-        const cm = afterSlash.match(/^(.+?)\s+x(\d+)/i) || afterSlash.match(/^([^\s₱]+)/);
+        const cm = afterSlash.match(/^(.+?)\s+x(\d+)/i) || afterSlash.split(" ")[0].match(/^([^\s]+)/);
         if (cm) {
           const rawCode = cm[1].trim().toUpperCase();
           const count = cm[2] ? parseInt(cm[2]) : 1;
@@ -696,46 +696,37 @@ function getDashboard(inventoryResults, transactions) {
 // Much faster than scanning the entire folder.
 
 function searchPhotosForCode(itemCode) {
-  const results = [];
+  var results = [];
   try {
-    const folderId = DRIVE_ROOT_ID;
-    const codeUpper = itemCode.toUpperCase();
-    const codeLower = itemCode.toLowerCase();
+    var folder = DriveApp.getFolderById(DRIVE_ROOT_ID);
+    var codeUpper = itemCode.toUpperCase().trim();
+    var codeStripped = codeUpper.replace(/-0+([0-9])/g, "-$1");
 
-    // Drive full-text search is case-insensitive but `name contains`
-    // can be inconsistent — search both cases and deduplicate
-    const queries = [
-      `'${folderId}' in parents and name contains '${codeUpper}' and mimeType contains 'image/' and trashed = false`,
-      `'${folderId}' in parents and name contains '${codeLower}' and mimeType contains 'image/' and trashed = false`
-    ];
+    var files = folder.getFiles();
+    while (files.hasNext()) {
+      var file = files.next();
+      if (file.getMimeType().indexOf("image/") !== 0) continue;
 
-    const seenIds = new Set();
-    for (const query of queries) {
-      try {
-        const files = DriveApp.searchFiles(query);
-        while (files.hasNext()) {
-          const file = files.next();
-          if (seenIds.has(file.getId())) continue;
-          seenIds.add(file.getId());
+      var fullName = file.getName();
+      var dotIdx = fullName.lastIndexOf(".");
+      var baseName = dotIdx > 0 ? fullName.substring(0, dotIdx) : fullName;
+      var baseUpper = baseName.toUpperCase().trim();
+      var baseStripped = baseUpper.replace(/-0+([0-9])/g, "-$1");
 
-          const fullName = file.getName();
-          const baseName = fullName.replace(/\.[^.]+$/, "");
-          const baseUpper = baseName.toUpperCase().trim();
-
-          // Must start with the item code (case-insensitive)
-          // Followed by end, any non-digit, or separator
-          // e.g. BGI-10006, bgi-10006b, BGI-10006-F, bgi-10006c all match
-          // but BGI-100060, BGI-100061 do NOT match BGI-10006
-          const regex = new RegExp("^" + codeUpper.replace(/[-]/g, "\-") + "([^0-9]|$)", "i");
-          if (regex.test(baseUpper)) {
-            results.push({ name: baseName, id: file.getId() });
-          }
+      function startsWith(base, code) {
+        if (base === code) return true;
+        if (base.length > code.length && base.indexOf(code) === 0) {
+          var c = base.charAt(code.length);
+          return c < "0" || c > "9";
         }
-      } catch(qe) {
-        Logger.log("Query error: " + qe);
+        return false;
+      }
+
+      if (startsWith(baseUpper, codeUpper) || startsWith(baseStripped, codeStripped)) {
+        results.push({ name: baseName, id: file.getId() });
       }
     }
-    results.sort((a, b) => a.name.localeCompare(b.name));
+    results.sort(function(a, b) { return a.name.localeCompare(b.name); });
   } catch(e) {
     Logger.log("Photo search error: " + e);
   }
@@ -745,47 +736,41 @@ function searchPhotosForCode(itemCode) {
 // ── Web App ───────────────────────────────────────────────────
 
 function doGet(e) {
-  const path     = (e && e.parameter && e.parameter.path)     || "dashboard";
-  const code     = (e && e.parameter && e.parameter.code)     || null;
-  const callback = (e && e.parameter && e.parameter.callback) || null;
-  let data;
+  var path     = (e && e.parameter && e.parameter.path)     || "dashboard";
+  var code     = (e && e.parameter && e.parameter.code)     || null;
+  var callback = (e && e.parameter && e.parameter.callback) || null;
+  var data;
 
   try {
     if (path === "photos") {
-      // Search for photos for a specific item code
-      const itemCode = (e && e.parameter && e.parameter.code) || "";
-      if (!itemCode) {
-        data = [];
-      } else {
-        data = searchPhotosForCode(itemCode.toUpperCase());
-      }
+      data = searchPhotosForCode(code ? code.toUpperCase() : "");
     } else {
-      const built = buildAll();
-      const inv     = built.inventoryResults;
-      const pkgs    = built.packageResults;
-      const qty     = built.quantityResults;
-      const txns    = built.transactions;
-      const history = built.rentalHistory;
+      var built = buildAll();
+      var inv     = built.inventoryResults;
+      var pkgs    = built.packageResults;
+      var qty     = built.quantityResults;
+      var txns    = built.transactions;
+      var history = built.rentalHistory;
 
       if      (path === "inventory")    data = Object.values(inv);
       else if (path === "transactions") data = txns;
       else if (path === "packages")     data = Object.values(pkgs);
       else if (path === "quantity")     data = qty;
       else if (path === "item" && code) {
-        const uc   = code.toUpperCase();
-        const item = inv[uc];
-        data = item ? { ...item, history: (history[uc] || []) } : null;
+        var uc   = code.toUpperCase();
+        var item = inv[uc];
+        data = item ? Object.assign({}, item, { history: (history[uc] || []) }) : null;
       } else {
         data = getDashboard(inv, txns);
       }
     }
   } catch(err) {
-    const errOut = JSON.stringify({ ok: false, error: err.toString() });
+    var errOut = JSON.stringify({ ok: false, error: err.toString() });
     if (callback) return ContentService.createTextOutput(callback + "(" + errOut + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
     return ContentService.createTextOutput(errOut).setMimeType(ContentService.MimeType.JSON);
   }
 
-  const output = JSON.stringify({ ok: true, data });
+  var output = JSON.stringify({ ok: true, data: data });
   if (callback) return ContentService.createTextOutput(callback + "(" + output + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
   return ContentService.createTextOutput(output).setMimeType(ContentService.MimeType.JSON);
 }
