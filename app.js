@@ -91,21 +91,15 @@ async function refreshAll() {
   }
 }
 
-async function loadPhotos() {
+async function loadPhotosForItem(code) {
   try {
-    State.photos = await api("photos");
-    // If a drawer is open on the photos tab, refresh it automatically
-    const openTab = document.querySelector(".drawer-tab.active");
-    if (openTab && openTab.dataset.tab === "photos") {
-      const titleEl = document.getElementById("drawerTitle");
-      if (titleEl && titleEl.textContent) {
-        const code = titleEl.textContent.trim();
-        const containers = document.querySelectorAll("[id^='photoGalleryContent-']");
-        containers.forEach(c => { c.innerHTML = photoGalleryHTML(code); });
-      }
-    }
+    const photos = await api("photos", { code });
+    // Store under the item code
+    State.photos[code.toUpperCase()] = photos;
+    return photos;
   } catch(e) {
-    console.warn("Could not load photos:", e);
+    console.warn("Could not load photos for", code, e);
+    return [];
   }
 }
 
@@ -218,10 +212,10 @@ function getPhotosForItem(code) {
   return results;
 }
 
-function photoGalleryHTML(code) {
-  const photos = getPhotosForItem(code);
-  if (!photos.length) return '<p style="color:var(--mist);font-size:.8rem">No photos available</p>';
-  return `<div class="photo-gallery">${photos.map(p => `
+function photoGalleryHTML(code, photos) {
+  const list = photos || getPhotosForItem(code);
+  if (!list.length) return '<p style="color:var(--mist);font-size:.8rem">No photos available</p>';
+  return `<div class="photo-gallery">${list.map(p => `
     <div class="photo-item">
       <img src="https://drive.google.com/thumbnail?id=${p.id}&sz=w400" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.style.display='none'">
       <div class="photo-name">${esc(p.name)}</div>
@@ -445,8 +439,8 @@ function showItemDrawer(code) {
     </div>
 
     <div id="drawerTab-photos" style="display:none">
-      <div id="photoGalleryContent-${esc(item.code)}">
-        ${Object.keys(State.photos).length > 0 ? photoGalleryHTML(item.code) : '<p style="color:var(--mist);font-size:.8rem">Photos loading… click Photos tab again if empty.</p>'}
+      <div id="photoGalleryContent" data-code="${esc(item.code)}">
+        <p style="color:var(--mist);font-size:.8rem">Click to load photos…</p>
       </div>
     </div>
 
@@ -469,17 +463,23 @@ function switchDrawerTab(tab) {
     const el=document.getElementById("drawerTab-"+t);
     if(el) el.style.display = t===tab?"block":"none";
   });
-  // When switching to photos tab, always refresh the gallery
+  // When switching to photos tab, fetch photos for this item
   if (tab === "photos") {
-    const titleEl = document.getElementById("drawerTitle");
-    if (titleEl) {
-      const code = titleEl.textContent.trim();
-      const containers = document.querySelectorAll("[id^='photoGalleryContent-']");
-      containers.forEach(c => {
-        c.innerHTML = Object.keys(State.photos).length > 0
-          ? photoGalleryHTML(code)
-          : "<p style='color:var(--mist);font-size:.8rem'>Photos still loading — try again in a moment.</p>";
-      });
+    const container = document.getElementById("photoGalleryContent");
+    if (container) {
+      const code = container.dataset.code;
+      if (code) {
+        // Show cached immediately if available
+        const cached = getPhotosForItem(code);
+        if (cached.length > 0) {
+          container.innerHTML = photoGalleryHTML(code, cached);
+        } else {
+          container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Loading photos…</p>';
+          loadPhotosForItem(code).then(photos => {
+            container.innerHTML = photoGalleryHTML(code, photos);
+          });
+        }
+      }
     }
   }
 }
@@ -519,6 +519,22 @@ function initItemSearchPage() {
   }
 }
 
+// Load photos after showItemProfile renders
+function loadProfilePhotos() {
+  const el = document.getElementById("profilePhotoGallery");
+  if (!el) return;
+  const code = el.dataset.code;
+  if (!code) return;
+  const cached = getPhotosForItem(code);
+  if (cached.length > 0) {
+    el.innerHTML = photoGalleryHTML(code, cached);
+  } else {
+    loadPhotosForItem(code).then(photos => {
+      el.innerHTML = photoGalleryHTML(code, photos);
+    });
+  }
+}
+
 function runItemSearch() {
   const q       = (document.getElementById("itemSearchInput")?.value||"").trim().toLowerCase();
   const cat     = document.getElementById("itemFilterCat")?.value||"";
@@ -544,6 +560,7 @@ function runItemSearch() {
   const exactMatch = data.find(i=>(i.code||"").toLowerCase()===q);
   if (exactMatch || data.length===1) {
     showItemProfile(exactMatch||data[0]);
+    setTimeout(loadProfilePhotos, 50);
     return;
   }
 
@@ -567,7 +584,9 @@ function runItemSearch() {
       </div>
     </div>`;
   results.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>{
-    showItemProfile(data.find(i=>i.code===r.dataset.code));
+    const found = data.find(i=>i.code===r.dataset.code);
+    showItemProfile(found);
+    setTimeout(loadProfilePhotos, 50);
   }));
 }
 
@@ -853,9 +872,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (GAS_URL) {
-    // Load photos immediately in background on every page load
-    loadPhotos();
-
     await refreshAll();
     if (!cached) {
       const page=document.body.dataset.page;
@@ -867,8 +883,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       else renderDashboard();
     }
 
-    // Reload photos every 5 minutes automatically
-    setInterval(loadPhotos, 5 * 60 * 1000);
+    // Photos are loaded per-item on demand
   } else {
     renderCurrentPage();
   }

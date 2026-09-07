@@ -691,30 +691,31 @@ function getDashboard(inventoryResults, transactions) {
   return { counts, byBranch };
 }
 
-// ── Photo Map ─────────────────────────────────────────────────
-// Scans only the root folder — no recursion for speed.
-// All photos should be placed directly in DRIVE_ROOT_ID.
+// ── Photo Search ──────────────────────────────────────────────
+// Searches Drive for files matching a specific item code prefix.
+// Much faster than scanning the entire folder.
 
-function buildPhotoMap() {
-  const map = {};
+function searchPhotosForCode(itemCode) {
+  const results = [];
   try {
     const folder = DriveApp.getFolderById(DRIVE_ROOT_ID);
-    const files  = folder.getFiles();
+    // Use Drive search query to find files starting with the item code
+    // This is far faster than listing all files
+    const escaped = itemCode.replace(/'/g, "\'");
+    const query = `'${folder.getId()}' in parents and name contains '${escaped}' and mimeType contains 'image/' and trashed = false`;
+    const files = DriveApp.searchFiles(query);
     while (files.hasNext()) {
       const file     = files.next();
-      const mime     = file.getMimeType();
-      if (!mime.startsWith("image/")) continue;
       const fullName = file.getName();
       const baseName = fullName.replace(/\.[^/.]+$/, "");
-      const upperBase = baseName.toUpperCase().trim();
-      if (!upperBase) continue;
-      if (!map[upperBase]) map[upperBase] = [];
-      map[upperBase].push({ name: baseName, id: file.getId() });
+      results.push({ name: baseName, id: file.getId() });
     }
+    // Sort by name
+    results.sort((a, b) => a.name.localeCompare(b.name));
   } catch(e) {
-    Logger.log("Photo scan error: " + e);
+    Logger.log("Photo search error: " + e);
   }
-  return map;
+  return results;
 }
 
 // ── Web App ───────────────────────────────────────────────────
@@ -727,7 +728,13 @@ function doGet(e) {
 
   try {
     if (path === "photos") {
-      data = buildPhotoMap();
+      // Search for photos for a specific item code
+      const itemCode = (e && e.parameter && e.parameter.code) || "";
+      if (!itemCode) {
+        data = [];
+      } else {
+        data = searchPhotosForCode(itemCode.toUpperCase());
+      }
     } else {
       const built = buildAll();
       const inv     = built.inventoryResults;
