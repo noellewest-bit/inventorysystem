@@ -97,10 +97,11 @@ async function loadPhotosForItem(code) {
     const photos = (links || []).filter(Boolean).map((url, i) => {
       const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
       const id = match ? match[1] : "";
+      // Try multiple URL formats — thumbnail works for publicly shared files
       const displayUrl = id
-        ? "https://drive.google.com/uc?export=view&id=" + id
+        ? "https://lh3.googleusercontent.com/d/" + id
         : url;
-      return { name: code + (i > 0 ? " (" + (i+1) + ")" : ""), id, displayUrl };
+      return { name: code + (i > 0 ? " (" + (i+1) + ")" : ""), id, displayUrl, directUrl: url };
     });
     State.photos[code.toUpperCase()] = photos;
     return photos;
@@ -224,7 +225,8 @@ function photoGalleryHTML(code, photos) {
   if (!list.length) return '<p style="color:var(--mist);font-size:.8rem">No photos available</p>';
   return `<div class="photo-gallery">${list.map(p => `
     <div class="photo-item">
-      <img src="${esc(p.displayUrl || ("https://drive.google.com/uc?export=view&id=" + p.id))}" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.style.display='none'">
+      <img src="${esc(p.displayUrl)}" alt="${esc(p.name)}" loading="lazy"
+           onerror="this.src='https://drive.google.com/thumbnail?id=${p.id}&sz=w400';this.onerror=function(){this.parentElement.querySelector('.photo-name').textContent+=' (preview unavailable)';this.style.display='none';}">
       <div class="photo-name">${esc(p.name)}</div>
     </div>`).join("")}</div>`;
 }
