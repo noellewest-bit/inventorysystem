@@ -93,8 +93,18 @@ async function refreshAll() {
 
 async function loadPhotosForItem(code) {
   try {
-    const photos = await api("photos", { code });
-    // Store under the item code
+    const links = await api("photos", { code });
+    // Convert Drive view URLs to direct display URLs
+    const photos = (links || []).filter(Boolean).map((url, i) => {
+      // Extract file ID from URL: https://drive.google.com/file/d/FILE_ID/view
+      const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      const id    = match ? match[1] : "";
+      // Use uc?export=view format which works for publicly shared files
+      const displayUrl = id
+        ? "https://drive.google.com/uc?export=view&id=" + id
+        : url;
+      return { name: code + (i > 0 ? " (" + (i+1) + ")" : ""), id, displayUrl };
+    });
     State.photos[code.toUpperCase()] = photos;
     return photos;
   } catch(e) {
@@ -217,7 +227,7 @@ function photoGalleryHTML(code, photos) {
   if (!list.length) return '<p style="color:var(--mist);font-size:.8rem">No photos available</p>';
   return `<div class="photo-gallery">${list.map(p => `
     <div class="photo-item">
-      <img src="https://drive.google.com/thumbnail?id=${p.id}&sz=w400" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.style.display='none'">
+      <img src="${esc(p.displayUrl || ("https://drive.google.com/uc?export=view&id=" + p.id))}" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.style.display='none'">
       <div class="photo-name">${esc(p.name)}</div>
     </div>`).join("")}</div>`;
 }

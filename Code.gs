@@ -39,6 +39,11 @@ const ROW_ITEMS = 13860; // row 13861 — new format starts here
 // ── Utilities ─────────────────────────────────────────────────
 
 function sheetVals(ssId, shName) {
+  if (!ssId || !shName) {
+    Logger.log("sheetVals called with invalid args: ssId=["+ssId+"] shName=["+shName+"]");
+    Logger.log(new Error().stack);
+    return [];
+  }
   try {
     const sh = SpreadsheetApp.openById(ssId).getSheetByName(shName);
     if (!sh) return [];
