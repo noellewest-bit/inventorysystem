@@ -692,87 +692,29 @@ function getDashboard(inventoryResults, transactions) {
 }
 
 // ── Photo Map ─────────────────────────────────────────────────
+// Scans only the root folder — no recursion for speed.
+// All photos should be placed directly in DRIVE_ROOT_ID.
 
 function buildPhotoMap() {
-  const map = {}; // UPPER_FILENAME_NO_EXT → [{ name, id }]
-
-  function addFile(file) {
-    const fullName = file.getName();
-    const baseName = fullName.replace(/\.[^/.]+$/, "");
-    const upperBase = baseName.toUpperCase().trim();
-    if (!upperBase) return;
-    // Only add image files
-    const mime = file.getMimeType();
-    if (!mime.startsWith("image/")) return;
-    if (!map[upperBase]) map[upperBase] = [];
-    map[upperBase].push({ name: baseName, id: file.getId() });
-  }
-
-  function scanFolder(folder, depth) {
-    if (depth > 20) return; // safety limit — 20 levels deep is more than enough
-    const name = folder.getName().toLowerCase();
-    if (name === "group") return; // skip group folder
-
-    // Scan files in this folder
-    const files = folder.getFiles();
-    while (files.hasNext()) addFile(files.next());
-
-    // Recurse into subfolders
-    const subs = folder.getFolders();
-    while (subs.hasNext()) scanFolder(subs.next(), depth + 1);
-  }
-
+  const map = {};
   try {
-    const root = DriveApp.getFolderById(DRIVE_ROOT_ID);
-    scanFolder(root, 0);
+    const folder = DriveApp.getFolderById(DRIVE_ROOT_ID);
+    const files  = folder.getFiles();
+    while (files.hasNext()) {
+      const file     = files.next();
+      const mime     = file.getMimeType();
+      if (!mime.startsWith("image/")) continue;
+      const fullName = file.getName();
+      const baseName = fullName.replace(/\.[^/.]+$/, "");
+      const upperBase = baseName.toUpperCase().trim();
+      if (!upperBase) continue;
+      if (!map[upperBase]) map[upperBase] = [];
+      map[upperBase].push({ name: baseName, id: file.getId() });
+    }
   } catch(e) {
     Logger.log("Photo scan error: " + e);
   }
   return map;
-}
-
-// ── Cache ─────────────────────────────────────────────────────
-const CACHE_TTL   = 300;   // 5 minutes
-const CHUNK_SIZE  = 90000; // 90KB per cache entry (GAS limit is 100KB)
-
-function cacheGet(key) {
-  try {
-    const c    = CacheService.getScriptCache();
-    const meta = c.get("nw_" + key + "_meta");
-    if (!meta) return null;
-    const { n } = JSON.parse(meta);
-    let out = "";
-    for (let i = 0; i < n; i++) {
-      const chunk = c.get("nw_" + key + "_" + i);
-      if (chunk === null) return null; // a chunk expired — treat as miss
-      out += chunk;
-    }
-    return out;
-  } catch(e) { return null; }
-}
-
-function cachePut(key, str) {
-  try {
-    const c      = CacheService.getScriptCache();
-    const n      = Math.ceil(str.length / CHUNK_SIZE);
-    const entries = { ["nw_" + key + "_meta"]: JSON.stringify({ n }) };
-    for (let i = 0; i < n; i++) {
-      entries["nw_" + key + "_" + i] = str.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-    }
-    c.putAll(entries, CACHE_TTL);
-  } catch(e) { Logger.log("cachePut error: " + e); }
-}
-
-function cacheClear() {
-  try {
-    const c    = CacheService.getScriptCache();
-    const keys = ["nw_all_meta", "nw_photos_meta"];
-    for (let i = 0; i < 60; i++) {
-      keys.push("nw_all_" + i);
-      keys.push("nw_photos_" + i);
-    }
-    c.removeAll(keys);
-  } catch(e) {}
 }
 
 // ── Web App ───────────────────────────────────────────────────
@@ -781,47 +723,18 @@ function doGet(e) {
   const path     = (e && e.parameter && e.parameter.path)     || "dashboard";
   const code     = (e && e.parameter && e.parameter.code)     || null;
   const callback = (e && e.parameter && e.parameter.callback) || null;
-  const bust     = (e && e.parameter && e.parameter.bust)     || null;
   let data;
 
   try {
-
-    // ── Clear cache ──
-    if (path === "clearcache") {
-      cacheClear();
-      data = { cleared: true };
-
-    // ── Photos ──
-    } else if (path === "photos") {
-      const cached = bust ? null : cacheGet("photos");
-      if (cached) {
-        data = JSON.parse(cached);
-      } else {
-        data = buildPhotoMap();
-        cachePut("photos", JSON.stringify(data));
-      }
-
-    // ── All inventory / transaction paths ──
+    if (path === "photos") {
+      data = buildPhotoMap();
     } else {
-      const cached = bust ? null : cacheGet("all");
-      let inv, pkgs, qty, txns, history;
-
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        inv     = parsed.inv;
-        pkgs    = parsed.pkgs;
-        qty     = parsed.qty;
-        txns    = parsed.txns;
-        history = parsed.history;
-      } else {
-        const built = buildAll();
-        inv     = built.inventoryResults;
-        pkgs    = built.packageResults;
-        qty     = built.quantityResults;
-        txns    = built.transactions;
-        history = built.rentalHistory;
-        cachePut("all", JSON.stringify({ inv, pkgs, qty, txns, history }));
-      }
+      const built = buildAll();
+      const inv     = built.inventoryResults;
+      const pkgs    = built.packageResults;
+      const qty     = built.quantityResults;
+      const txns    = built.transactions;
+      const history = built.rentalHistory;
 
       if      (path === "inventory")    data = Object.values(inv);
       else if (path === "transactions") data = txns;
@@ -835,7 +748,6 @@ function doGet(e) {
         data = getDashboard(inv, txns);
       }
     }
-
   } catch(err) {
     const errOut = JSON.stringify({ ok: false, error: err.toString() });
     if (callback) return ContentService.createTextOutput(callback + "(" + errOut + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
