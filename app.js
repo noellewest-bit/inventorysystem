@@ -430,7 +430,7 @@ function showItemDrawer(code) {
   const html = `
     <div style="display:flex;gap:8px;margin-bottom:16px;border-bottom:1px solid var(--cloud);padding-bottom:12px">
       <button class="drawer-tab active" data-tab="info" onclick="switchDrawerTab('info')">Info</button>
-      <button class="drawer-tab" data-tab="photos" onclick="switchDrawerTab('photos')">Photos</button>
+      <button class="drawer-tab" data-tab="photos" onclick="switchDrawerTab('photos');loadDrawerPhotos()">Photos</button>
       <button class="drawer-tab" data-tab="history" onclick="switchDrawerTab('history')">Transactions (${txnHistory.length})</button>
     </div>
 
@@ -470,25 +470,27 @@ function switchDrawerTab(tab) {
     const el=document.getElementById("drawerTab-"+t);
     if(el) el.style.display = t===tab?"block":"none";
   });
-  // When switching to photos tab, fetch photos for this item
   if (tab === "photos") {
-    const container = document.getElementById("photoGalleryContent");
-    if (container) {
-      const code = container.dataset.code;
-      if (code) {
-        // Show cached immediately if available
-        const cached = getPhotosForItem(code);
-        if (cached.length > 0) {
-          container.innerHTML = photoGalleryHTML(code, cached);
-        } else {
-          container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Loading photos…</p>';
-          loadPhotosForItem(code).then(photos => {
-            container.innerHTML = photoGalleryHTML(code, photos);
-          });
-        }
-      }
-    }
+    loadDrawerPhotos();
   }
+}
+
+function loadDrawerPhotos() {
+  const container = document.getElementById("photoGalleryContent");
+  if (!container) return;
+  const code = container.dataset.code;
+  if (!code) return;
+  const cached = getPhotosForItem(code);
+  if (cached.length > 0) {
+    container.innerHTML = photoGalleryHTML(code, cached);
+    return;
+  }
+  container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Loading photos…</p>';
+  loadPhotosForItem(code).then(photos => {
+    container.innerHTML = photoGalleryHTML(code, photos);
+  }).catch(() => {
+    container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Could not load photos.</p>';
+  });
 }
 
 function initInventoryPage() {
