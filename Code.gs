@@ -700,40 +700,65 @@ function getDashboard(inventoryResults, transactions) {
 // Searches Drive for files matching a specific item code prefix.
 // Much faster than scanning the entire folder.
 
-function searchPhotosForCode(itemCode) {
+function getPhotosFromSheet(itemCode) {
+  // Read photo links directly from PHOTO LINK columns in the inventory sheet
   var results = [];
   try {
-    var folder = DriveApp.getFolderById(DRIVE_ROOT_ID);
-    var codeUpper = itemCode.toUpperCase().trim();
-    var codeStripped = codeUpper.replace(/-0+([0-9])/g, "-$1");
+    var codeUpper = (itemCode || "").toUpperCase().trim();
+    if (!codeUpper) return results;
 
-    var files = folder.getFiles();
-    while (files.hasNext()) {
-      var file = files.next();
-      if (file.getMimeType().indexOf("image/") !== 0) continue;
+    var ss = SpreadsheetApp.openById(SS.masterInventory);
 
-      var fullName = file.getName();
-      var dotIdx = fullName.lastIndexOf(".");
-      var baseName = dotIdx > 0 ? fullName.substring(0, dotIdx) : fullName;
-      var baseUpper = baseName.toUpperCase().trim();
-      var baseStripped = baseUpper.replace(/-0+([0-9])/g, "-$1");
+    // Determine sheet from code prefix
+    var sheetName = null;
+    if (/^BGI-/i.test(codeUpper))       sheetName = "BGI";
+    else if (/^BGS-/i.test(codeUpper))  sheetName = "BGS";
+    else if (/^PGI-/i.test(codeUpper))  sheetName = "PGI";
+    else if (/^PGS-/i.test(codeUpper))  sheetName = "PGS";
+    else if (/^PGC-/i.test(codeUpper))  sheetName = "PGC";
+    else if (/^FIL-/i.test(codeUpper))  sheetName = "FIL";
+    else if (/^MG-/i.test(codeUpper))   sheetName = "MG";
+    else if (/^CD-/i.test(codeUpper))   sheetName = "CD";
+    else if (/^MS-/i.test(codeUpper))   sheetName = "MS";
+    else if (/^CS-/i.test(codeUpper))   sheetName = "CS";
+    else if (/^PET-[0-9]/i.test(codeUpper)) sheetName = "PET-#";
+    else if (/^S.UPPER-/i.test(codeUpper))  sheetName = "S-UPPER";
+    else if (/^MOH-/i.test(codeUpper))  sheetName = "MOH";
+    else if (/^BMG-/i.test(codeUpper))  sheetName = "BMG";
+    else if (/^FGG-/i.test(codeUpper))  sheetName = "FGG";
+    else {
+      // Try name-based items (BGI, PGI items without dashes)
+      sheetName = "BGI";
+    }
 
-      function startsWith(base, code) {
-        if (base === code) return true;
-        if (base.length > code.length && base.indexOf(code) === 0) {
-          var c = base.charAt(code.length);
-          return c < "0" || c > "9";
-        }
-        return false;
-      }
+    var sh = ss.getSheetByName(sheetName);
+    if (!sh) return results;
 
-      if (startsWith(baseUpper, codeUpper) || startsWith(baseStripped, codeStripped)) {
-        results.push({ name: baseName, id: file.getId() });
+    // Find PHOTO LINK columns from header
+    var lastCol = sh.getLastColumn();
+    var header  = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    var photoCols = [];
+    for (var c = 0; c < header.length; c++) {
+      if ((header[c]||"").toString().toUpperCase().indexOf("PHOTO LINK") === 0) {
+        photoCols.push(c + 1);
       }
     }
-    results.sort(function(a, b) { return a.name.localeCompare(b.name); });
+    if (photoCols.length === 0) return results;
+
+    // Search column A for the item code
+    var colAData = sh.getRange(2, 1, sh.getLastRow()-1, 1).getValues();
+    for (var r = 0; r < colAData.length; r++) {
+      var rowCode = (colAData[r][0]||"").toString().trim().toUpperCase();
+      if (rowCode !== codeUpper) continue;
+      // Found — read photo link cells
+      for (var p = 0; p < photoCols.length; p++) {
+        var link = sh.getRange(r+2, photoCols[p]).getValue().toString().trim();
+        if (link) results.push(link);
+      }
+      return results;
+    }
   } catch(e) {
-    Logger.log("Photo search error: " + e);
+    Logger.log("getPhotosFromSheet error [" + itemCode + "]: " + e);
   }
   return results;
 }
@@ -748,7 +773,7 @@ function doGet(e) {
 
   try {
     if (path === "photos") {
-      data = searchPhotosForCode(code ? code.toUpperCase() : "");
+      data = getPhotosFromSheet(code || "");
     } else {
       var built = buildAll();
       var inv     = built.inventoryResults;

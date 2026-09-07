@@ -93,12 +93,10 @@ async function refreshAll() {
 async function loadPhotosForItem(code) {
   try {
     const links = await api("photos", { code });
-    // Convert Drive view URLs to direct display URLs
+    // links is array of Drive URLs from PHOTO LINK columns
     const photos = (links || []).filter(Boolean).map((url, i) => {
-      // Extract file ID from URL: https://drive.google.com/file/d/FILE_ID/view
       const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      const id    = match ? match[1] : "";
-      // Use uc?export=view format which works for publicly shared files
+      const id = match ? match[1] : "";
       const displayUrl = id
         ? "https://drive.google.com/uc?export=view&id=" + id
         : url;
