@@ -698,19 +698,43 @@ function getDashboard(inventoryResults, transactions) {
 function searchPhotosForCode(itemCode) {
   const results = [];
   try {
-    const folder = DriveApp.getFolderById(DRIVE_ROOT_ID);
-    // Use Drive search query to find files starting with the item code
-    // This is far faster than listing all files
-    const escaped = itemCode.replace(/'/g, "\'");
-    const query = `'${folder.getId()}' in parents and name contains '${escaped}' and mimeType contains 'image/' and trashed = false`;
-    const files = DriveApp.searchFiles(query);
-    while (files.hasNext()) {
-      const file     = files.next();
-      const fullName = file.getName();
-      const baseName = fullName.replace(/\.[^/.]+$/, "");
-      results.push({ name: baseName, id: file.getId() });
+    const folderId = DRIVE_ROOT_ID;
+    const codeUpper = itemCode.toUpperCase();
+    const codeLower = itemCode.toLowerCase();
+
+    // Drive full-text search is case-insensitive but `name contains`
+    // can be inconsistent — search both cases and deduplicate
+    const queries = [
+      `'${folderId}' in parents and name contains '${codeUpper}' and mimeType contains 'image/' and trashed = false`,
+      `'${folderId}' in parents and name contains '${codeLower}' and mimeType contains 'image/' and trashed = false`
+    ];
+
+    const seenIds = new Set();
+    for (const query of queries) {
+      try {
+        const files = DriveApp.searchFiles(query);
+        while (files.hasNext()) {
+          const file = files.next();
+          if (seenIds.has(file.getId())) continue;
+          seenIds.add(file.getId());
+
+          const fullName = file.getName();
+          const baseName = fullName.replace(/\.[^.]+$/, "");
+          const baseUpper = baseName.toUpperCase().trim();
+
+          // Must start with the item code (case-insensitive)
+          // Followed by end, any non-digit, or separator
+          // e.g. BGI-10006, bgi-10006b, BGI-10006-F, bgi-10006c all match
+          // but BGI-100060, BGI-100061 do NOT match BGI-10006
+          const regex = new RegExp("^" + codeUpper.replace(/[-]/g, "\-") + "([^0-9]|$)", "i");
+          if (regex.test(baseUpper)) {
+            results.push({ name: baseName, id: file.getId() });
+          }
+        }
+      } catch(qe) {
+        Logger.log("Query error: " + qe);
+      }
     }
-    // Sort by name
     results.sort((a, b) => a.name.localeCompare(b.name));
   } catch(e) {
     Logger.log("Photo search error: " + e);
