@@ -80,8 +80,7 @@ async function refreshAll() {
     updateLastUpdated();
     showToast("Data refreshed");
 
-    // Load photos in background
-    loadPhotos();
+    // Photos loaded on demand per item
   } catch(err) {
     showToast("Error: " + err.message, true);
     loadCache();
