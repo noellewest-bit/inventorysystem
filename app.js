@@ -328,6 +328,30 @@ function renderDashboard() {
       </div>`).join("");
   }
 
+  // Upcoming pickups — due today, across all branches
+  const upcomingBody = document.getElementById("upcomingPickupsBody");
+  if (upcomingBody) {
+    const todaysPickups = getDayEvents(new Date(), "").pickups
+      .slice().sort((a,b)=> (a.branch||"").localeCompare(b.branch||""));
+    if (!todaysPickups.length) {
+      upcomingBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><p class="empty-sub">No pickups scheduled for today.</p></div></td></tr>`;
+    } else {
+      upcomingBody.innerHTML = todaysPickups.map(t => {
+        const items = calItemsForTxn(t);
+        const preview = items.slice(0,3).map(i=>esc(i)).join(", ") + (items.length>3?` +${items.length-3} more`:"");
+        return `
+        <tr class="td-clickable" data-txn="${esc(t.txnNum)}">
+          <td class="td-txn">${esc(t.txnNum)}</td>
+          <td>${esc(t.customer)||"—"}</td>
+          <td>${esc(t.branch)||"—"}</td>
+          <td>${preview||"—"}</td>
+          <td>${statusBadge(t.txnStatus)}</td>
+        </tr>`;
+      }).join("");
+      upcomingBody.querySelectorAll("tr[data-txn]").forEach(r => r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn)));
+    }
+  }
+
   // Recent transactions
   const tbody = document.getElementById("recentTxnBody");
   if (tbody) {
@@ -745,9 +769,9 @@ function showTxnDrawer(txnNum) {
       <div style="margin-top:16px">
         <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
         ${ledgerRow("GRAND TOTAL", fmtMoney(t.grandTotal))}
-        ${ledgerRow("+ FIRST PAYMENT", fmtMoney(-(t.initialAmountPaid||0)))}
-        ${ledgerRow("+ ADDITIONAL PAYMENTS", fmtMoney(-paymentsSum))}
-        ${ledgerRow("+ REFUNDS", fmtMoney(refundsSum))}
+        ${ledgerRow("+ FIRST PAYMENT", fmtMoney(t.initialAmountPaid||0))}
+        ${ledgerRow("+ ADDITIONAL PAYMENTS", fmtMoney(paymentsSum))}
+        ${ledgerRow("- REFUNDS", fmtMoney(-refundsSum))}
         ${ledgerRow("= REMAINING BALANCE", fmtMoney(t.remainingBalance), true)}
         <div style="margin-top:10px;text-align:center">
           <span class="badge ${isFullyPaid?"badge-available":"badge-pending"}">${isFullyPaid?"FULLY PAID":"PARTIALLY PAID"}</span>
@@ -835,31 +859,29 @@ function getDayEvents(dateObj, branch) {
   return { pickups, releases, returns };
 }
 
-function calEventRowHTML(t) {
-  const chips = (t.trackedItems||[]).map(i=>`<span class="item-chip">${esc(i)}</span>`).join("");
-  const qtyChips = Object.entries(t.qtyItems||{}).map(([k,v])=>`<span class="item-chip">${esc(k)} ×${v}</span>`).join("");
-  return `
-    <div class="cal-event-row" data-txn="${esc(t.txnNum)}">
-      <div class="cal-event-top">
-        <span class="td-txn">${esc(t.txnNum)}</span>
-        <span class="meta-pill">${esc(t.branch)||"—"}</span>
-        ${statusBadge(t.txnStatus)}
-        ${t.txnType?`<span style="font-size:.7rem;color:var(--mist)">${esc(t.txnType)}</span>`:""}
-      </div>
-      <div class="cal-event-customer">${esc(t.customer)||"—"}</div>
-      ${(chips||qtyChips)?`<div class="items-list">${chips}${qtyChips}</div>`:""}
-    </div>`;
-}
-
-function calEventChipHTML(t, kind) {
-  const cls   = kind === "pickup" ? "cal-badge-pickup" : "cal-badge-return";
-  const label = kind === "pickup" ? "Pickup" : "Return";
-  return `
-    <div class="cal-week-event" data-txn="${esc(t.txnNum)}">
-      <span class="cal-badge ${cls}">${label}</span>
-      <div style="margin-top:3px;font-weight:500">${esc(t.customer)||esc(t.txnNum)}</div>
-      <div style="color:var(--mist)">${esc(t.branch)||"—"}</div>
-    </div>`;
+// Builds the list of item labels to show for one transaction on the
+// calendar specifically. For wedding packages, generic role counts
+// (VST×11, POLO×11, MOTHER'S GOWN×2...) don't tell anyone anything useful
+// on a pickup/return planner — what matters is which package, and which
+// specifically-coded items are actually going out the door. So package
+// transactions show "PACKAGE TYPE - COLOR" plus any individually-coded
+// tracked items / add-ons; everything else shows its tracked + qty items.
+function calItemsForTxn(t) {
+  if (t.packageType || t.packageColor) {
+    const label = [t.packageType, t.packageColor].filter(Boolean).join(" - ");
+    const items = new Set(t.trackedItems||[]);
+    // addOnCodes carry richer labels (with ×N counts) for non-tracked
+    // add-ons — prefer those over the bare code when both exist.
+    (t.addOnCodes||[]).forEach(c => {
+      const base = c.replace(/\s*×\d+$/, "");
+      items.delete(base);
+      items.add(c);
+    });
+    return [label, ...items].filter(Boolean);
+  }
+  const items = [...(t.trackedItems||[])];
+  Object.entries(t.qtyItems||{}).forEach(([k,v]) => items.push(v>1 ? `${k} ×${v}` : k));
+  return items;
 }
 
 function calMonthLabel(d) {
@@ -909,53 +931,94 @@ function renderMonthView(refDate, branch) {
     </div>`;
 }
 
+// Returns { pickups, releases, returns } across a whole date range
+// [startDate, endDate] inclusive — used by the week view. "Released"
+// here means the item overlaps the range at any point during its
+// pickup→return window (not just picked up/returned within it).
+function getRangeEvents(startDate, endDate, branch) {
+  const startTS = calStartOfDay(startDate).getTime();
+  const endTS   = calStartOfDay(endDate).getTime();
+  const pickups = [], releases = [], returns = [];
+  for (const t of State.transactions) {
+    if (branch && t.branch !== branch) continue;
+    const p = t.pickupDate ? calStartOfDay(new Date(t.pickupDate)).getTime() : null;
+    const r = (!t.isRetail && t.returnDate) ? calStartOfDay(new Date(t.returnDate)).getTime() : null;
+    if (p !== null && p >= startTS && p <= endTS) pickups.push(t);
+    if (r !== null && r >= startTS && r <= endTS) returns.push(t);
+    if (p !== null && r !== null && p < endTS && r > startTS) releases.push(t);
+  }
+  return { pickups, releases, returns };
+}
+
+function calEventRowHTML(t, dateLabel) {
+  const items = calItemsForTxn(t);
+  const chips = items.map(i=>`<span class="item-chip">${esc(i)}</span>`).join("");
+  return `
+    <div class="cal-event-row" data-txn="${esc(t.txnNum)}">
+      <div class="cal-event-top">
+        <span class="td-txn">${esc(t.txnNum)}</span>
+        ${dateLabel?`<span class="meta-pill">${esc(dateLabel)}</span>`:""}
+        ${statusBadge(t.txnStatus)}
+        ${t.txnType?`<span style="font-size:.7rem;color:var(--mist)">${esc(t.txnType)}</span>`:""}
+      </div>
+      <div class="items-list" style="margin-bottom:5px">${chips || '<span style="color:var(--mist);font-size:.78rem">No items on file</span>'}</div>
+      <div class="cal-event-customer">${esc(t.customer)||"—"}</div>
+    </div>`;
+}
+
+// Groups pickups/releases/returns by branch and renders one block per
+// branch, each with its own Pickup / Released / Return sub-lists.
+// `showDates`=true (week view) attaches a per-row date badge since a
+// week spans several days; day view omits it since every row is that
+// same day already.
+function renderBranchSections(pickups, releases, returns, showDates) {
+  const byBranch = list => {
+    const map = {};
+    for (const t of list) (map[t.branch || "—"] = map[t.branch || "—"] || []).push(t);
+    return map;
+  };
+  const pByBranch = byBranch(pickups), rByBranch = byBranch(releases), tByBranch = byBranch(returns);
+  const allBranches = new Set([...Object.keys(pByBranch), ...Object.keys(rByBranch), ...Object.keys(tByBranch)]);
+
+  if (!allBranches.size) {
+    return `<div class="cal-section"><div class="empty-state"><p class="empty-sub">Nothing scheduled</p></div></div>`;
+  }
+
+  const sortedBranches = [...allBranches].sort((a,b)=> a==="—" ? 1 : b==="—" ? -1 : a.localeCompare(b));
+
+  const subSection = (title, list, emptyText, labelFn) => `
+    <div class="cal-section">
+      <div class="cal-section-title"><span>${title}</span><span class="cal-section-count">${list.length}</span></div>
+      ${list.length ? list.map(t=>calEventRowHTML(t, labelFn?labelFn(t):null)).join("") : `<div class="empty-state"><p class="empty-sub">${emptyText}</p></div>`}
+    </div>`;
+
+  return sortedBranches.map(b => {
+    const bp = (pByBranch[b]||[]).slice().sort((x,y)=> new Date(x.pickupDate||0)-new Date(y.pickupDate||0));
+    const br = (rByBranch[b]||[]).slice().sort((x,y)=> new Date(x.pickupDate||0)-new Date(y.pickupDate||0));
+    const bt = (tByBranch[b]||[]).slice().sort((x,y)=> new Date(x.returnDate||0)-new Date(y.returnDate||0));
+    const total = bp.length + br.length + bt.length;
+    return `
+      <div class="cal-branch-block">
+        <div class="cal-branch-header"><span>${esc(b)}</span><span class="cal-section-count">${total}</span></div>
+        ${subSection("Due for Pickup", bp, "No pickups scheduled", showDates ? (t=>fmtDate(t.pickupDate)) : null)}
+        ${subSection("Currently Released", br, "Nothing currently released", t=>`${fmtDate(t.pickupDate)} – ${fmtDate(t.returnDate)}`)}
+        ${subSection("Due for Return", bt, "No returns scheduled", showDates ? (t=>fmtDate(t.returnDate)) : null)}
+      </div>`;
+  }).join("");
+}
+
 function renderWeekView(refDate, branch) {
   const weekStart = calAddDays(refDate, -refDate.getDay());
-  const today = calStartOfDay(new Date()).getTime();
-  const MAX_VISIBLE = 4;
-
-  let cols = "";
-  for (let i = 0; i < 7; i++) {
-    const d = calAddDays(weekStart, i);
-    const key = calDateKey(d);
-    const isToday = calStartOfDay(d).getTime() === today;
-    const { pickups, releases, returns } = getDayEvents(d, branch);
-    const events = [
-      ...pickups.map(t=>({t, kind:"pickup"})),
-      ...returns.map(t=>({t, kind:"return"})),
-    ];
-    const visible = events.slice(0, MAX_VISIBLE);
-    const overflow = events.length - visible.length;
-
-    cols += `
-      <div class="cal-week-col">
-        <div class="cal-week-col-header${isToday?" is-today":""}" data-date="${key}">
-          <div class="cal-week-day-label">${CAL_WEEKDAYS[d.getDay()]}</div>
-          <div class="cal-week-day-num">${d.getDate()}</div>
-        </div>
-        <div class="cal-week-col-body">
-          ${releases.length?`<div class="cal-week-released-note">${releases.length} released</div>`:""}
-          ${visible.map(e=>calEventChipHTML(e.t, e.kind)).join("")}
-          ${overflow>0?`<div class="cal-week-more" data-date="${key}">+${overflow} more</div>`:""}
-          ${!events.length && !releases.length?`<div class="cal-week-empty">Nothing scheduled</div>`:""}
-        </div>
-      </div>`;
-  }
-  return `<div class="cal-week-grid">${cols}</div>`;
+  const weekEnd    = calAddDays(weekStart, 6);
+  const { pickups, releases, returns } = getRangeEvents(weekStart, weekEnd, branch);
+  return renderBranchSections(pickups, releases, returns, true);
 }
 
 function renderDayViewHTML(refDate, branch) {
   const { pickups, releases, returns } = getDayEvents(refDate, branch);
-  const section = (title, list, emptyText) => `
-    <div class="cal-section">
-      <div class="cal-section-title"><span>${title}</span><span class="cal-section-count">${list.length}</span></div>
-      ${list.length ? list.map(t=>calEventRowHTML(t)).join("") : `<div class="empty-state"><p class="empty-sub">${emptyText}</p></div>`}
-    </div>`;
   return `
     <div class="cal-day-header">${calDayLabel(refDate)}</div>
-    ${section("Due for Pickup", pickups, "No pickups scheduled")}
-    ${section("Currently Released", releases, "Nothing currently released")}
-    ${section("Due for Return", returns, "No returns scheduled")}`;
+    ${renderBranchSections(pickups, releases, returns, false)}`;
 }
 
 function renderCalendar() {
@@ -1022,8 +1085,67 @@ function initCalendarPage() {
   renderCalendar();
 }
 
+// ── BRANCH PAGES ──────────────────────────────────────────────
+// One page per branch (gorordo.html, mandaue.html, ...), each with
+// data-branch="GORORDO" etc. on <body>. Rather than duplicate all the
+// inventory/transactions/calendar machinery, these pages reuse the
+// exact same element IDs and render/init functions as the standalone
+// Inventory, Transactions, and Calendar pages — since only one page is
+// ever loaded at a time there's no ID collision. We just pin
+// InvSt/TxnSt/CalSt.branch to the fixed branch up front (and these
+// pages simply don't render a branch <select>, so there's nothing for
+// the user to change it back to "All Branches" with).
+function renderBranchStats(branch) {
+  const items = State.inventory.filter(i => i.branch === branch);
+  const counts = { total: items.length, available:0, released:0, forLaundry:0, sold:0 };
+  for (const i of items) {
+    if      (i.status === "AVAILABLE")   counts.available++;
+    else if (i.status === "RELEASED")    counts.released++;
+    else if (i.status === "FOR LAUNDRY") counts.forLaundry++;
+    else if (i.status === "SOLD" || i.status === "SOLD OUT") counts.sold++;
+  }
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??0;};
+  set("brStatTotal",     counts.total);
+  set("brStatAvailable", counts.available);
+  set("brStatReleased",  counts.released);
+  set("brStatLaundry",   counts.forLaundry);
+  set("brStatSold",      counts.sold);
+}
+
+function initBranchTabs() {
+  const btns   = document.querySelectorAll(".tab-btn");
+  const panels = document.querySelectorAll(".tab-panel");
+  btns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      btns.forEach(b=>b.classList.toggle("active", b===btn));
+      panels.forEach(p=>p.classList.toggle("active", p.id === "panel-"+btn.dataset.tab));
+    });
+  });
+}
+
+function initBranchPage() {
+  const branch = document.body.dataset.branch || "";
+  InvSt.branch = branch;
+  TxnSt.branch = branch;
+  CalSt.branch = branch;
+
+  renderBranchStats(branch);
+  initBranchTabs();
+  initInventoryPage();
+  initTransactionsPage();
+  initCalendarPage();
+}
+
+function renderBranchPage() {
+  renderBranchStats(document.body.dataset.branch || "");
+  renderInventory();
+  renderTransactions();
+  renderCalendar();
+}
+
 // ── PACKAGES PAGE ─────────────────────────────────────────────
 const PkgSt = { search:"", status:"", branch:"", sortCol:-1, sortDir:1, page:1 };
+
 
 function filterPkgs() {
   let data=State.packages;
@@ -1149,6 +1271,7 @@ function renderCurrentPage() {
   else if (page==="packages")     renderPackages();
   else if (page==="quantity")     renderQuantity();
   else if (page==="calendar")     renderCalendar();
+  else if (page==="branch")       renderBranchPage();
   else if (page==="search")       { /* search renders on user action */ }
 }
 
@@ -1170,6 +1293,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="packages")     initPackagesPage();
     else if (page==="quantity")     initQuantityPage();
     else if (page==="calendar")     initCalendarPage();
+    else if (page==="branch")       initBranchPage();
     else if (page==="search")       initItemSearchPage();
     else renderDashboard();
   }
@@ -1183,6 +1307,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="packages")     initPackagesPage();
       else if (page==="quantity")     initQuantityPage();
       else if (page==="calendar")     initCalendarPage();
+      else if (page==="branch")       initBranchPage();
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();
     }

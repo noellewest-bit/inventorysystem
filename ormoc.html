@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard — Noelle West</title>
+  <title>Ormoc — Noelle West</title>
   <link rel="stylesheet" href="styles.css">
   <script>window.NW_GAS_URL = "https://script.google.com/macros/s/AKfycbzQv_YoL0lkJ7tuO7iuDbZn-DRek3Myq2UKYjgxsua0M08WSARc1fEuZI8UM047OJdp/exec";</script>
 </head>
-<body data-page="dashboard">
+<body data-page="branch" data-branch="ORMOC">
   <div id="loadingOverlay" class="loading-overlay">
     <div class="spinner"></div>
     <p class="loading-text">LOADING DATA…</p>
@@ -18,7 +18,7 @@
       <div class="sidebar-brand"><div class="brand-name">Noelle West</div><div class="brand-sub">Inventory Tracker</div></div>
       <div class="sidebar-nav">
         <div class="nav-section-label">Overview</div>
-        <a href="index.html" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+        <a href="index.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
         <div class="nav-section-label">Tracking</div>
         <a href="inventory.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 3H8L6 7h12l-2-4z"/></svg>Inventory</a>
         <a href="transactions.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="2"/><path d="M9 12h6M9 16h4"/></svg>Transactions</a>
@@ -30,7 +30,7 @@
         <a href="gorordo.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Gorordo</a>
         <a href="mandaue.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Mandaue</a>
         <a href="talisay.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Talisay</a>
-        <a href="ormoc.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Ormoc</a>
+        <a href="ormoc.html" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Ormoc</a>
         <a href="tacloban.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Tacloban</a>
         <div class="nav-section-label">Search</div>
         <a href="search.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Item Lookup</a>
@@ -43,7 +43,7 @@
         <button class="hamburger" id="hamburger">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <span class="topbar-title">Dashboard</span>
+        <span class="topbar-title">Ormoc</span>
       </div>
       <div class="topbar-right">
         <button class="btn-refresh">
@@ -57,42 +57,95 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <div><strong>Setup required:</strong> Set <code>window.NW_GAS_URL</code> in each HTML file. See <code>README.md</code>.</div>
       </div>
+
         <div class="stats-grid">
-          <div class="stat-card total"><div class="stat-num" id="statTotal">—</div><div class="stat-label">Total Inventory</div></div>
-          <div class="stat-card available"><div class="stat-num" id="statAvailable">—</div><div class="stat-label">Available</div></div>
-          <div class="stat-card released"><div class="stat-num" id="statReleased">—</div><div class="stat-label">Released</div></div>
-          <div class="stat-card laundry"><div class="stat-num" id="statLaundry">—</div><div class="stat-label">For Laundry</div></div>
-          <div class="stat-card sold"><div class="stat-num" id="statSold">—</div><div class="stat-label">Sold</div></div>
+          <div class="stat-card total"><div class="stat-num" id="brStatTotal">—</div><div class="stat-label">Total Inventory</div></div>
+          <div class="stat-card available"><div class="stat-num" id="brStatAvailable">—</div><div class="stat-label">Available</div></div>
+          <div class="stat-card released"><div class="stat-num" id="brStatReleased">—</div><div class="stat-label">Released</div></div>
+          <div class="stat-card laundry"><div class="stat-num" id="brStatLaundry">—</div><div class="stat-label">For Laundry</div></div>
+          <div class="stat-card sold"><div class="stat-num" id="brStatSold">—</div><div class="stat-label">Sold</div></div>
         </div>
 
-        <div class="section-header"><span class="section-title">Branch Overview</span></div>
-        <div class="branch-grid" id="branchGrid"></div>
-
-        <div class="section-header">
-          <span class="section-title">Upcoming Pickups — Today</span>
-          <a href="calendar.html" class="section-link">Open calendar →</a>
+        <div class="tab-toggle">
+          <button class="tab-btn active" data-tab="inventory">Inventory</button>
+          <button class="tab-btn" data-tab="transactions">Transactions</button>
+          <button class="tab-btn" data-tab="calendar">Calendar</button>
         </div>
-        <div class="table-card">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Items</th><th>Status</th></tr></thead>
-              <tbody id="upcomingPickupsBody"><tr><td colspan="5"><div class="empty-state"><p class="empty-sub">Click Refresh to load data.</p></div></td></tr></tbody>
-            </table>
+
+        <div id="panel-inventory" class="tab-panel active">
+          <div class="toolbar">
+            <div class="search-wrap">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="invSearch" class="search-input" placeholder="Search code, category, customer…">
+            </div>
+            <select id="invFilterStatus" class="filter-select">
+              <option value="">All Statuses</option>
+              <option value="AVAILABLE">Available</option>
+              <option value="RELEASED">Released</option>
+              <option value="FOR LAUNDRY">For Laundry</option>
+              <option value="SOLD">Sold</option>
+              <option value="MISSING">Missing</option>
+              <option value="DAMAGE">Damage</option>
+              <option value="SEVERANCE">Severance</option>
+            </select>
+            <select id="invFilterCat" class="filter-select">
+              <option value="">All Categories</option>
+            </select>
+          </div>
+          <div class="table-card">
+            <div class="table-header"><span class="table-title">Ormoc Inventory</span><span class="table-count" id="invCount">—</span></div>
+            <div class="table-wrap">
+              <table id="invTable">
+                <thead><tr><th>Item Code</th><th>Category</th><th>Status</th><th>Branch</th><th>First User</th><th>Rental Rate</th><th>Retail Price</th><th>Weight</th></tr></thead>
+                <tbody id="invBody"><tr><td colspan="8"><div class="empty-state"><p class="empty-sub">Click Refresh to load inventory.</p></div></td></tr></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="invPagination"></div>
           </div>
         </div>
 
-        <div class="section-header">
-          <span class="section-title">Recent Transactions</span>
-          <a href="transactions.html" class="section-link">View all →</a>
-        </div>
-        <div class="table-card">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Status</th><th>Pickup Date</th></tr></thead>
-              <tbody id="recentTxnBody"><tr><td colspan="5"><div class="empty-state"><p class="empty-sub">Click Refresh to load data.</p></div></td></tr></tbody>
-            </table>
+        <div id="panel-transactions" class="tab-panel">
+          <div class="toolbar">
+            <div class="search-wrap">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="txnSearch" class="search-input" placeholder="Search transaction #, customer…">
+            </div>
+            <select id="txnFilterStatus" class="filter-select">
+              <option value="">All Statuses</option>
+              <option value="FOR PICKUP">For Pickup</option>
+              <option value="PENDING">Pending</option>
+              <option value="COMPLETED">Completed</option>
+            </select>
+          </div>
+          <div class="table-card">
+            <div class="table-header"><span class="table-title">Ormoc Transactions</span><span class="table-count" id="txnCount">—</span></div>
+            <div class="table-wrap">
+              <table id="txnTable">
+                <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Type</th><th>Package</th><th>Status</th><th>Pickup Date</th></tr></thead>
+                <tbody id="txnBody"><tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Click Refresh to load transactions.</p></div></td></tr></tbody>
+              </table>
+            </div>
+            <div class="pagination" id="txnPagination"></div>
           </div>
         </div>
+
+        <div id="panel-calendar" class="tab-panel">
+          <div class="cal-toolbar">
+            <div class="cal-nav">
+              <button class="btn-page" id="calPrev">‹</button>
+              <button class="btn-page" id="calToday">Today</button>
+              <button class="btn-page" id="calNext">›</button>
+              <span class="cal-title" id="calTitle">—</span>
+            </div>
+            <div class="cal-view-toggle" id="calViewToggle">
+              <button class="cal-view-btn" data-view="month">Month</button>
+              <button class="cal-view-btn" data-view="week">Week</button>
+              <button class="cal-view-btn" data-view="day">Day</button>
+            </div>
+          </div>
+          <div id="calBody"></div>
+        </div>
+
       </div>
     </div>
   </div>
