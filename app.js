@@ -734,6 +734,240 @@ function initTransactionsPage() {
   renderTransactions();
 }
 
+// ── CALENDAR PAGE ─────────────────────────────────────────────
+// Pickup/return planner built entirely from State.transactions —
+// no extra API calls, just date-bucketing what's already cached.
+const CalSt = { view: "month", current: new Date(), branch: "" };
+
+function calDateKey(d) {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+}
+
+function calStartOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0,0,0,0);
+  return x;
+}
+
+function calAddDays(d, n) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function calAddMonths(d, n) {
+  const x = new Date(d);
+  x.setDate(1); // avoid month-length rollover bugs
+  x.setMonth(x.getMonth() + n);
+  return x;
+}
+
+// Returns { pickups, releases, returns } — arrays of transactions —
+// for one calendar day, optionally filtered to a single branch.
+function getDayEvents(dateObj, branch) {
+  const day = calStartOfDay(dateObj).getTime();
+  const pickups = [], releases = [], returns = [];
+  for (const t of State.transactions) {
+    if (branch && t.branch !== branch) continue;
+    const p = t.pickupDate ? calStartOfDay(new Date(t.pickupDate)).getTime() : null;
+    const r = (!t.isRetail && t.returnDate) ? calStartOfDay(new Date(t.returnDate)).getTime() : null;
+    if (p === day) pickups.push(t);
+    if (r === day) returns.push(t);
+    if (p !== null && r !== null && p < day && r > day) releases.push(t);
+  }
+  return { pickups, releases, returns };
+}
+
+function calEventRowHTML(t) {
+  const chips = (t.trackedItems||[]).map(i=>`<span class="item-chip">${esc(i)}</span>`).join("");
+  const qtyChips = Object.entries(t.qtyItems||{}).map(([k,v])=>`<span class="item-chip">${esc(k)} ×${v}</span>`).join("");
+  return `
+    <div class="cal-event-row" data-txn="${esc(t.txnNum)}">
+      <div class="cal-event-top">
+        <span class="td-txn">${esc(t.txnNum)}</span>
+        <span class="meta-pill">${esc(t.branch)||"—"}</span>
+        ${statusBadge(t.txnStatus)}
+        ${t.txnType?`<span style="font-size:.7rem;color:var(--mist)">${esc(t.txnType)}</span>`:""}
+      </div>
+      <div class="cal-event-customer">${esc(t.customer)||"—"}</div>
+      ${(chips||qtyChips)?`<div class="items-list">${chips}${qtyChips}</div>`:""}
+    </div>`;
+}
+
+function calEventChipHTML(t, kind) {
+  const cls   = kind === "pickup" ? "cal-badge-pickup" : "cal-badge-return";
+  const label = kind === "pickup" ? "Pickup" : "Return";
+  return `
+    <div class="cal-week-event" data-txn="${esc(t.txnNum)}">
+      <span class="cal-badge ${cls}">${label}</span>
+      <div style="margin-top:3px;font-weight:500">${esc(t.customer)||esc(t.txnNum)}</div>
+      <div style="color:var(--mist)">${esc(t.branch)||"—"}</div>
+    </div>`;
+}
+
+function calMonthLabel(d) {
+  return d.toLocaleDateString("en-PH",{month:"long",year:"numeric"});
+}
+function calDayLabel(d) {
+  return d.toLocaleDateString("en-PH",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+}
+function calWeekLabel(startD, endD) {
+  const sameMonth = startD.getMonth()===endD.getMonth() && startD.getFullYear()===endD.getFullYear();
+  const startStr = startD.toLocaleDateString("en-PH",{month:"short",day:"numeric"});
+  const endStr   = endD.toLocaleDateString("en-PH", sameMonth?{day:"numeric",year:"numeric"}:{month:"short",day:"numeric",year:"numeric"});
+  return `${startStr} – ${endStr}`;
+}
+
+const CAL_WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+function renderMonthView(refDate, branch) {
+  const year = refDate.getFullYear(), month = refDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = calAddDays(firstOfMonth, -firstOfMonth.getDay());
+  const today = calStartOfDay(new Date()).getTime();
+
+  let cells = "";
+  for (let i = 0; i < 42; i++) {
+    const d = calAddDays(gridStart, i);
+    const key = calDateKey(d);
+    const isOtherMonth = d.getMonth() !== month;
+    const isToday = calStartOfDay(d).getTime() === today;
+    const { pickups, releases, returns } = getDayEvents(d, branch);
+    const badges = [
+      pickups.length  ? `<span class="cal-badge cal-badge-pickup" title="Due for pickup">P·${pickups.length}</span>`   : "",
+      releases.length ? `<span class="cal-badge cal-badge-release" title="Currently released">O·${releases.length}</span>` : "",
+      returns.length  ? `<span class="cal-badge cal-badge-return" title="Due for return">R·${returns.length}</span>`  : "",
+    ].join("");
+    cells += `
+      <div class="cal-day-cell${isOtherMonth?" other-month":""}${isToday?" is-today":""}" data-date="${key}">
+        <div class="cal-day-num">${d.getDate()}</div>
+        <div class="cal-day-badges">${badges}</div>
+      </div>`;
+  }
+
+  return `
+    <div class="cal-grid">
+      <div class="cal-weekday-row">${CAL_WEEKDAYS.map(w=>`<div class="cal-weekday">${w}</div>`).join("")}</div>
+      <div class="cal-month-grid">${cells}</div>
+    </div>`;
+}
+
+function renderWeekView(refDate, branch) {
+  const weekStart = calAddDays(refDate, -refDate.getDay());
+  const today = calStartOfDay(new Date()).getTime();
+  const MAX_VISIBLE = 4;
+
+  let cols = "";
+  for (let i = 0; i < 7; i++) {
+    const d = calAddDays(weekStart, i);
+    const key = calDateKey(d);
+    const isToday = calStartOfDay(d).getTime() === today;
+    const { pickups, releases, returns } = getDayEvents(d, branch);
+    const events = [
+      ...pickups.map(t=>({t, kind:"pickup"})),
+      ...returns.map(t=>({t, kind:"return"})),
+    ];
+    const visible = events.slice(0, MAX_VISIBLE);
+    const overflow = events.length - visible.length;
+
+    cols += `
+      <div class="cal-week-col">
+        <div class="cal-week-col-header${isToday?" is-today":""}" data-date="${key}">
+          <div class="cal-week-day-label">${CAL_WEEKDAYS[d.getDay()]}</div>
+          <div class="cal-week-day-num">${d.getDate()}</div>
+        </div>
+        <div class="cal-week-col-body">
+          ${releases.length?`<div class="cal-week-released-note">${releases.length} released</div>`:""}
+          ${visible.map(e=>calEventChipHTML(e.t, e.kind)).join("")}
+          ${overflow>0?`<div class="cal-week-more" data-date="${key}">+${overflow} more</div>`:""}
+          ${!events.length && !releases.length?`<div class="cal-week-empty">Nothing scheduled</div>`:""}
+        </div>
+      </div>`;
+  }
+  return `<div class="cal-week-grid">${cols}</div>`;
+}
+
+function renderDayViewHTML(refDate, branch) {
+  const { pickups, releases, returns } = getDayEvents(refDate, branch);
+  const section = (title, list, emptyText) => `
+    <div class="cal-section">
+      <div class="cal-section-title"><span>${title}</span><span class="cal-section-count">${list.length}</span></div>
+      ${list.length ? list.map(t=>calEventRowHTML(t)).join("") : `<div class="empty-state"><p class="empty-sub">${emptyText}</p></div>`}
+    </div>`;
+  return `
+    <div class="cal-day-header">${calDayLabel(refDate)}</div>
+    ${section("Due for Pickup", pickups, "No pickups scheduled")}
+    ${section("Currently Released", releases, "Nothing currently released")}
+    ${section("Due for Return", returns, "No returns scheduled")}`;
+}
+
+function renderCalendar() {
+  const body = document.getElementById("calBody");
+  const titleEl = document.getElementById("calTitle");
+  if (!body) return;
+
+  document.querySelectorAll(".cal-view-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===CalSt.view));
+
+  if (CalSt.view === "month") {
+    if (titleEl) titleEl.textContent = calMonthLabel(CalSt.current);
+    body.innerHTML = renderMonthView(CalSt.current, CalSt.branch);
+  } else if (CalSt.view === "week") {
+    const weekStart = calAddDays(CalSt.current, -CalSt.current.getDay());
+    const weekEnd   = calAddDays(weekStart, 6);
+    if (titleEl) titleEl.textContent = calWeekLabel(weekStart, weekEnd);
+    body.innerHTML = renderWeekView(CalSt.current, CalSt.branch);
+  } else {
+    if (titleEl) titleEl.textContent = "";
+    body.innerHTML = renderDayViewHTML(CalSt.current, CalSt.branch);
+  }
+
+  // Click a day cell / week header / "+more" → jump into Day view
+  body.querySelectorAll("[data-date]").forEach(el => {
+    el.addEventListener("click", () => {
+      CalSt.current = new Date(el.dataset.date + "T00:00:00");
+      CalSt.view = "day";
+      renderCalendar();
+    });
+  });
+  // Click an event chip/row → open the transaction drawer
+  body.querySelectorAll("[data-txn]").forEach(el => {
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      showTxnDrawer(el.dataset.txn);
+    });
+  });
+}
+
+function initCalendarPage() {
+  document.querySelectorAll(".cal-view-btn").forEach(btn => {
+    btn.addEventListener("click", () => { CalSt.view = btn.dataset.view; renderCalendar(); });
+  });
+  document.getElementById("calPrev")?.addEventListener("click", () => {
+    if (CalSt.view==="month") CalSt.current = calAddMonths(CalSt.current, -1);
+    else if (CalSt.view==="week") CalSt.current = calAddDays(CalSt.current, -7);
+    else CalSt.current = calAddDays(CalSt.current, -1);
+    renderCalendar();
+  });
+  document.getElementById("calNext")?.addEventListener("click", () => {
+    if (CalSt.view==="month") CalSt.current = calAddMonths(CalSt.current, 1);
+    else if (CalSt.view==="week") CalSt.current = calAddDays(CalSt.current, 7);
+    else CalSt.current = calAddDays(CalSt.current, 1);
+    renderCalendar();
+  });
+  document.getElementById("calToday")?.addEventListener("click", () => {
+    CalSt.current = new Date();
+    renderCalendar();
+  });
+  document.getElementById("calFilterBranch")?.addEventListener("change", e => {
+    CalSt.branch = e.target.value;
+    renderCalendar();
+  });
+  renderCalendar();
+}
+
 // ── PACKAGES PAGE ─────────────────────────────────────────────
 const PkgSt = { search:"", status:"", branch:"", sortCol:-1, sortDir:1, page:1 };
 
@@ -860,6 +1094,7 @@ function renderCurrentPage() {
   else if (page==="transactions") renderTransactions();
   else if (page==="packages")     renderPackages();
   else if (page==="quantity")     renderQuantity();
+  else if (page==="calendar")     renderCalendar();
   else if (page==="search")       { /* search renders on user action */ }
 }
 
@@ -880,6 +1115,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="transactions") initTransactionsPage();
     else if (page==="packages")     initPackagesPage();
     else if (page==="quantity")     initQuantityPage();
+    else if (page==="calendar")     initCalendarPage();
     else if (page==="search")       initItemSearchPage();
     else renderDashboard();
   }
@@ -892,6 +1128,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="transactions") initTransactionsPage();
       else if (page==="packages")     initPackagesPage();
       else if (page==="quantity")     initQuantityPage();
+      else if (page==="calendar")     initCalendarPage();
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();
     }
