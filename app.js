@@ -685,30 +685,83 @@ function showTxnDrawer(txnNum) {
   const payments = t.additionalPayments || [];
   const refunds  = t.refunds || [];
 
-  const paymentRows = payments.map(p => `
-    <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
-      <div style="display:flex;justify-content:space-between"><span>${fmtDate(p.date)}</span><span style="font-family:var(--ff-mono);color:var(--forest,#2e7d32)">+${fmtMoney(p.amountPaid)}</span></div>
-      ${p.modeOfPayment?`<div style="color:var(--mist);margin-top:2px">${esc(p.modeOfPayment)}${p.gcashRef?" · Ref: "+esc(p.gcashRef):""}</div>`:""}
-      ${p.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(p.items)}</div>`:""}
-    </div>`).join("");
-
-  const refundRows = refunds.map(r => `
-    <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
-      <div style="display:flex;justify-content:space-between"><span>${fmtDate(r.date)}</span><span style="font-family:var(--ff-mono);color:var(--rust,#b3261e)">-${fmtMoney(r.amountRefunded)}</span></div>
-      ${r.cashier?`<div style="color:var(--mist);margin-top:2px">Cashier: ${esc(r.cashier)}</div>`:""}
-      ${r.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(r.items)}</div>`:""}
-    </div>`).join("");
-
-  const hasGrandTotal = t.grandTotal !== null && t.grandTotal !== undefined;
-  const balanceSection = `
+  // ── Order Summary ──
+  const orderSummarySection = t.orderSummary ? `
     <div style="margin-top:16px">
-      <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
-      ${hasGrandTotal?`<div class="detail-row"><span class="detail-label">Grand Total</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.grandTotal)}</span></div>`:""}
-      <div class="detail-row"><span class="detail-label">Total Amount Paid</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.totalPaid)}</span></div>
-      ${hasGrandTotal?`<div class="detail-row"><span class="detail-label">Remaining Balance</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.remainingBalance)}</span></div>`:""}
-    </div>
-    ${paymentRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Additional Payments (${payments.length})</div>${paymentRows}</div>`:""}
-    ${refundRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Refunds (${refunds.length})</div>${refundRows}</div>`:""}`;
+      <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">New Transaction Order Summary</div>
+      <pre style="font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.6;background:var(--paper);padding:12px;border-radius:4px;border:1px solid var(--cloud)">${esc(t.orderSummary)}</pre>
+    </div>` : "";
+
+  // ── Additional Payments & Refunds, merged and sorted chronologically ──
+  const activity = [
+    ...payments.map(p => ({ ...p, kind: "payment" })),
+    ...refunds.map(r  => ({ ...r, kind: "refund"  })),
+  ].sort((a,b) => new Date(a.date||0) - new Date(b.date||0));
+
+  const activityRows = activity.map(e => {
+    if (e.kind === "payment") {
+      return `
+        <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span><span class="cal-badge cal-badge-pickup" style="margin-right:6px">Payment</span>${fmtDate(e.date)}</span>
+            <span style="font-family:var(--ff-mono);color:#2e7d32">+${fmtMoney(e.amountPaid)}</span>
+          </div>
+          ${e.modeOfPayment?`<div style="color:var(--mist);margin-top:2px">${esc(e.modeOfPayment)}${e.gcashRef?" · Ref: "+esc(e.gcashRef):""}</div>`:""}
+          ${e.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(e.items)}</div>`:""}
+        </div>`;
+    }
+    return `
+      <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span><span class="cal-badge cal-badge-return" style="margin-right:6px">Refund</span>${fmtDate(e.date)}</span>
+          <span style="font-family:var(--ff-mono);color:#b3261e">-${fmtMoney(e.amountRefunded)}</span>
+        </div>
+        ${e.cashier?`<div style="color:var(--mist);margin-top:2px">Cashier: ${esc(e.cashier)}</div>`:""}
+        ${e.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(e.items)}</div>`:""}
+      </div>`;
+  }).join("");
+
+  const activitySection = `
+    <div style="margin-top:16px">
+      <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Additional Payments &amp; Refunds (${activity.length})</div>
+      ${activity.length ? activityRows : `<p style="color:var(--mist);font-size:.8rem">None recorded</p>`}
+    </div>`;
+
+  // ── Payment Status ledger ──
+  const paymentsSum = payments.reduce((s,p)=>s+p.amountPaid,0);
+  const refundsSum  = refunds.reduce((s,r)=>s+r.amountRefunded,0);
+  const hasGrandTotal = t.grandTotal !== null && t.grandTotal !== undefined;
+
+  const ledgerRow = (label, value, bold) => `
+    <div style="display:flex;justify-content:space-between;padding:7px 0;${bold?"border-top:1px solid var(--cloud);margin-top:4px;font-weight:600":""};font-size:.83rem">
+      <span>${label}</span>
+      <span style="font-family:var(--ff-mono)">${value}</span>
+    </div>`;
+
+  let ledgerSection = "";
+  if (hasGrandTotal) {
+    const isFullyPaid = t.remainingBalance !== null && t.remainingBalance <= 0.005;
+    ledgerSection = `
+      <div style="margin-top:16px">
+        <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
+        ${ledgerRow("GRAND TOTAL", fmtMoney(t.grandTotal))}
+        ${ledgerRow("+ FIRST PAYMENT", fmtMoney(-(t.initialAmountPaid||0)))}
+        ${ledgerRow("+ ADDITIONAL PAYMENTS", fmtMoney(-paymentsSum))}
+        ${ledgerRow("+ REFUNDS", fmtMoney(refundsSum))}
+        ${ledgerRow("= REMAINING BALANCE", fmtMoney(t.remainingBalance), true)}
+        <div style="margin-top:10px;text-align:center">
+          <span class="badge ${isFullyPaid?"badge-available":"badge-pending"}">${isFullyPaid?"FULLY PAID":"PARTIALLY PAID"}</span>
+        </div>
+      </div>`;
+  } else {
+    // No grand total parsed from the order form — show what we do know.
+    ledgerSection = `
+      <div style="margin-top:16px">
+        <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
+        ${ledgerRow("Total Amount Paid", fmtMoney(t.totalPaid))}
+        <p style="color:var(--mist);font-size:.75rem;margin-top:6px">Grand total not found on the original order form — remaining balance can't be calculated.</p>
+      </div>`;
+  }
 
   const html=`
     <div class="detail-row"><span class="detail-label">Transaction</span><span class="detail-value td-txn">${esc(t.txnNum)}</span></div>
@@ -721,8 +774,9 @@ function showTxnDrawer(txnNum) {
     <div class="detail-row"><span class="detail-label">Return</span><span class="detail-value">${fmtDate(t.returnDate)}</span></div>
     ${chips?`<div class="detail-row"><span class="detail-label">Tracked Items</span><div class="detail-value"><div class="items-list">${chips}</div></div></div>`:""}
     ${qtyRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Quantity Items</div>${qtyRows}</div>`:""}
-    ${balanceSection}
-    ${t.orderSummary?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Order Summary</div><pre style="font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.6;background:var(--paper);padding:12px;border-radius:4px;border:1px solid var(--cloud)">${esc(t.orderSummary)}</pre></div>`:""}`;
+    ${orderSummarySection}
+    ${activitySection}
+    ${ledgerSection}`;
   openDrawer(html, t.txnNum, t.customer);
 }
 
