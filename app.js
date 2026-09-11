@@ -12,7 +12,6 @@ const State = {
   packages:     [],
   quantity:     [],
   dashboard:    {},
-  photos:       {}, // upperCode → [{ name, id }]
   lastUpdated:  null,
 };
 
@@ -80,7 +79,8 @@ async function refreshAll() {
     updateLastUpdated();
     showToast("Data refreshed");
 
-    // Photos loaded on demand per item
+    // Photo links already travel inline on each inventory item
+    // (item.photoLinks) — nothing further to load here.
   } catch(err) {
     showToast("Error: " + err.message, true);
     loadCache();
@@ -90,31 +90,11 @@ async function refreshAll() {
   }
 }
 
-async function loadPhotosForItem(code) {
-  try {
-    const links = await api("photos", { code });
-    // links is array of Drive URLs from PHOTO LINK columns
-    const photos = (links || []).filter(Boolean).map((url, i) => {
-      const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      const id = match ? match[1] : "";
-      // Try multiple URL formats — thumbnail works for publicly shared files
-      const displayUrl = id
-        ? "https://lh3.googleusercontent.com/d/" + id
-        : url;
-      return { name: code + (i > 0 ? " (" + (i+1) + ")" : ""), id, displayUrl, directUrl: url };
-    });
-    State.photos[code.toUpperCase()] = photos;
-    return photos;
-  } catch(e) {
-    console.warn("Could not load photos for", code, e);
-    return [];
-  }
-}
-
 // ── Cache ─────────────────────────────────────────────────────
 function saveCache() {
   try {
-    // Photos intentionally excluded from cache so they always load fresh
+    // item.photoLinks travels inline with State.inventory, so photos
+    // are cached along with everything else — no separate handling needed.
     sessionStorage.setItem("nw_v4", JSON.stringify({
       inventory: State.inventory, transactions: State.transactions,
       packages: State.packages, quantity: State.quantity,
@@ -202,22 +182,23 @@ function fmtWeight(w) {
 }
 
 // ── Photos ────────────────────────────────────────────────────
+// Photo links come straight from the cached inventory item
+// (item.photoLinks, populated server-side from PHOTO LINK 1-5)
+// — no API call needed to display them.
 function getPhotosForItem(code) {
-  if (!code || !State.photos) return [];
+  if (!code) return [];
   const upper = code.toUpperCase().trim();
-  // Escape special regex chars in item code
-  const escaped = upper.replace(/[-\/\^$*+?.()|[\]{}]/g, '\$&');
-  // Match filenames that start with the item code, followed by end, -, b, c (variants), _ or space
-  const regex = new RegExp('^' + escaped + '(-|_|\s|[a-zA-Z]$|$)', 'i');
-  const results = [];
-  for (const [key, photos] of Object.entries(State.photos)) {
-    if (regex.test(key)) {
-      for (const p of photos) results.push(p);
-    }
-  }
-  // Sort by name for consistent ordering
-  results.sort((a,b) => a.name.localeCompare(b.name));
-  return results;
+  const item = State.inventory.find(i => (i.code||"").toUpperCase().trim() === upper);
+  const links = (item && item.photoLinks) || [];
+  return links.filter(Boolean).map((url, i) => {
+    const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    const id = match ? match[1] : "";
+    // Try multiple URL formats — thumbnail works for publicly shared files
+    const displayUrl = id
+      ? "https://lh3.googleusercontent.com/d/" + id
+      : url;
+    return { name: upper + (i > 0 ? " (" + (i+1) + ")" : ""), id, displayUrl, directUrl: url };
+  });
 }
 
 function photoGalleryHTML(code, photos) {
@@ -482,17 +463,8 @@ function loadDrawerPhotos() {
   if (!container) return;
   const code = container.dataset.code;
   if (!code) return;
-  const cached = getPhotosForItem(code);
-  if (cached.length > 0) {
-    container.innerHTML = photoGalleryHTML(code, cached);
-    return;
-  }
-  container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Loading photos…</p>';
-  loadPhotosForItem(code).then(photos => {
-    container.innerHTML = photoGalleryHTML(code, photos);
-  }).catch(() => {
-    container.innerHTML = '<p style="color:var(--mist);font-size:.8rem">Could not load photos.</p>';
-  });
+  // photoLinks are already in State.inventory — render immediately, no fetch.
+  container.innerHTML = photoGalleryHTML(code);
 }
 
 function initInventoryPage() {
@@ -530,20 +502,14 @@ function initItemSearchPage() {
   }
 }
 
-// Load photos after showItemProfile renders
+// Render photos after showItemProfile renders — photoLinks are already
+// in State.inventory, so this is synchronous, no fetch/wait involved.
 function loadProfilePhotos() {
   const el = document.getElementById("profilePhotoGallery");
   if (!el) return;
   const code = el.dataset.code;
   if (!code) return;
-  const cached = getPhotosForItem(code);
-  if (cached.length > 0) {
-    el.innerHTML = photoGalleryHTML(code, cached);
-  } else {
-    loadPhotosForItem(code).then(photos => {
-      el.innerHTML = photoGalleryHTML(code, photos);
-    });
-  }
+  el.innerHTML = photoGalleryHTML(code);
 }
 
 function runItemSearch() {
