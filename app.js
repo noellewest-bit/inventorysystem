@@ -170,6 +170,12 @@ function fmtDate(iso) {
   catch(e) { return iso; }
 }
 
+function fmtMoney(n) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "₱" + Math.abs(n).toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
 function esc(s) {
   return String(s||"")
     .replace(/&/g,"&amp;").replace(/</g,"&lt;")
@@ -675,6 +681,35 @@ function showTxnDrawer(txnNum) {
   if (!t) return;
   const chips=(t.trackedItems||[]).map(i=>`<span class="item-chip">${esc(i)}</span>`).join("");
   const qtyRows=Object.entries(t.qtyItems||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:.8rem;border-bottom:1px solid var(--cloud)"><span>${esc(k)}</span><span style="font-family:var(--ff-mono)">${v}</span></div>`).join("");
+
+  const payments = t.additionalPayments || [];
+  const refunds  = t.refunds || [];
+
+  const paymentRows = payments.map(p => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
+      <div style="display:flex;justify-content:space-between"><span>${fmtDate(p.date)}</span><span style="font-family:var(--ff-mono);color:var(--forest,#2e7d32)">+${fmtMoney(p.amountPaid)}</span></div>
+      ${p.modeOfPayment?`<div style="color:var(--mist);margin-top:2px">${esc(p.modeOfPayment)}${p.gcashRef?" · Ref: "+esc(p.gcashRef):""}</div>`:""}
+      ${p.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(p.items)}</div>`:""}
+    </div>`).join("");
+
+  const refundRows = refunds.map(r => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
+      <div style="display:flex;justify-content:space-between"><span>${fmtDate(r.date)}</span><span style="font-family:var(--ff-mono);color:var(--rust,#b3261e)">-${fmtMoney(r.amountRefunded)}</span></div>
+      ${r.cashier?`<div style="color:var(--mist);margin-top:2px">Cashier: ${esc(r.cashier)}</div>`:""}
+      ${r.items?`<div style="color:var(--mist);margin-top:2px;white-space:pre-wrap">${esc(r.items)}</div>`:""}
+    </div>`).join("");
+
+  const hasGrandTotal = t.grandTotal !== null && t.grandTotal !== undefined;
+  const balanceSection = `
+    <div style="margin-top:16px">
+      <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
+      ${hasGrandTotal?`<div class="detail-row"><span class="detail-label">Grand Total</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.grandTotal)}</span></div>`:""}
+      <div class="detail-row"><span class="detail-label">Total Amount Paid</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.totalPaid)}</span></div>
+      ${hasGrandTotal?`<div class="detail-row"><span class="detail-label">Remaining Balance</span><span class="detail-value" style="font-family:var(--ff-mono)">${fmtMoney(t.remainingBalance)}</span></div>`:""}
+    </div>
+    ${paymentRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Additional Payments (${payments.length})</div>${paymentRows}</div>`:""}
+    ${refundRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Refunds (${refunds.length})</div>${refundRows}</div>`:""}`;
+
   const html=`
     <div class="detail-row"><span class="detail-label">Transaction</span><span class="detail-value td-txn">${esc(t.txnNum)}</span></div>
     <div class="detail-row"><span class="detail-label">Customer</span><span class="detail-value">${esc(t.customer)||"—"}</span></div>
@@ -686,6 +721,7 @@ function showTxnDrawer(txnNum) {
     <div class="detail-row"><span class="detail-label">Return</span><span class="detail-value">${fmtDate(t.returnDate)}</span></div>
     ${chips?`<div class="detail-row"><span class="detail-label">Tracked Items</span><div class="detail-value"><div class="items-list">${chips}</div></div></div>`:""}
     ${qtyRows?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Quantity Items</div>${qtyRows}</div>`:""}
+    ${balanceSection}
     ${t.orderSummary?`<div style="margin-top:16px"><div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Order Summary</div><pre style="font-size:.75rem;white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.6;background:var(--paper);padding:12px;border-radius:4px;border:1px solid var(--cloud)">${esc(t.orderSummary)}</pre></div>`:""}`;
   openDrawer(html, t.txnNum, t.customer);
 }
