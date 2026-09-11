@@ -1085,6 +1085,195 @@ function initCalendarPage() {
   renderCalendar();
 }
 
+// ── WEDDING PACKAGE CALENDAR PAGE ─────────────────────────────
+// A second calendar, scoped to Wedding Package transactions only.
+// Reuses the main calendar's date-bucketing (getDayEvents/getRangeEvents)
+// and just filters down to package transactions afterward — same
+// underlying data, no extra API calls. The one real difference: the
+// item label shown here is just the package COLOR (not the full
+// package name + add-on codes shown on the main calendar), since for
+// a wedding-packages-only view, color is what's actually being tracked
+// day to day. Clicking a transaction still opens the same drawer with
+// the full order summary.
+const PkgCalSt = { view: "month", current: new Date(), branch: "" };
+
+function pkgItemLabel(t) {
+  return t.packageColor || t.packageType || "—";
+}
+
+function pkgFilterList(list) {
+  return list.filter(t => t.packageType || t.packageColor);
+}
+
+function getDayEventsPkg(dateObj, branch) {
+  const { pickups, releases, returns } = getDayEvents(dateObj, branch);
+  return { pickups: pkgFilterList(pickups), releases: pkgFilterList(releases), returns: pkgFilterList(returns) };
+}
+
+function getRangeEventsPkg(startDate, endDate, branch) {
+  const { pickups, releases, returns } = getRangeEvents(startDate, endDate, branch);
+  return { pickups: pkgFilterList(pickups), releases: pkgFilterList(releases), returns: pkgFilterList(returns) };
+}
+
+function calEventRowHTMLPkg(t, dateLabel) {
+  const label = pkgItemLabel(t);
+  return `
+    <div class="cal-event-row" data-txn="${esc(t.txnNum)}">
+      <div class="cal-event-top">
+        <span class="td-txn">${esc(t.txnNum)}</span>
+        ${dateLabel?`<span class="meta-pill">${esc(dateLabel)}</span>`:""}
+        ${statusBadge(t.txnStatus)}
+        ${t.txnType?`<span style="font-size:.7rem;color:var(--mist)">${esc(t.txnType)}</span>`:""}
+      </div>
+      <div class="items-list" style="margin-bottom:5px"><span class="item-chip">${esc(label)}</span></div>
+      <div class="cal-event-customer">${esc(t.customer)||"—"}</div>
+    </div>`;
+}
+
+function renderBranchSectionsPkg(pickups, releases, returns, showDates) {
+  const byBranch = list => {
+    const map = {};
+    for (const t of list) (map[t.branch || "—"] = map[t.branch || "—"] || []).push(t);
+    return map;
+  };
+  const pByBranch = byBranch(pickups), rByBranch = byBranch(releases), tByBranch = byBranch(returns);
+  const allBranches = new Set([...Object.keys(pByBranch), ...Object.keys(rByBranch), ...Object.keys(tByBranch)]);
+
+  if (!allBranches.size) {
+    return `<div class="cal-section"><div class="empty-state"><p class="empty-sub">No wedding packages scheduled</p></div></div>`;
+  }
+
+  const sortedBranches = [...allBranches].sort((a,b)=> a==="—" ? 1 : b==="—" ? -1 : a.localeCompare(b));
+
+  const subSection = (title, list, emptyText, labelFn) => `
+    <div class="cal-section">
+      <div class="cal-section-title"><span>${title}</span><span class="cal-section-count">${list.length}</span></div>
+      ${list.length ? list.map(t=>calEventRowHTMLPkg(t, labelFn?labelFn(t):null)).join("") : `<div class="empty-state"><p class="empty-sub">${emptyText}</p></div>`}
+    </div>`;
+
+  return sortedBranches.map(b => {
+    const bp = (pByBranch[b]||[]).slice().sort((x,y)=> new Date(x.pickupDate||0)-new Date(y.pickupDate||0));
+    const br = (rByBranch[b]||[]).slice().sort((x,y)=> new Date(x.pickupDate||0)-new Date(y.pickupDate||0));
+    const bt = (tByBranch[b]||[]).slice().sort((x,y)=> new Date(x.returnDate||0)-new Date(y.returnDate||0));
+    const total = bp.length + br.length + bt.length;
+    return `
+      <div class="cal-branch-block">
+        <div class="cal-branch-header"><span>${esc(b)}</span><span class="cal-section-count">${total}</span></div>
+        ${subSection("Due for Pickup", bp, "No pickups scheduled", showDates ? (t=>fmtDate(t.pickupDate)) : null)}
+        ${subSection("Currently Released", br, "Nothing currently released", t=>`${fmtDate(t.pickupDate)} – ${fmtDate(t.returnDate)}`)}
+        ${subSection("Due for Return", bt, "No returns scheduled", showDates ? (t=>fmtDate(t.returnDate)) : null)}
+      </div>`;
+  }).join("");
+}
+
+function renderMonthViewPkg(refDate, branch) {
+  const year = refDate.getFullYear(), month = refDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = calAddDays(firstOfMonth, -firstOfMonth.getDay());
+  const today = calStartOfDay(new Date()).getTime();
+
+  let cells = "";
+  for (let i = 0; i < 42; i++) {
+    const d = calAddDays(gridStart, i);
+    const key = calDateKey(d);
+    const isOtherMonth = d.getMonth() !== month;
+    const isToday = calStartOfDay(d).getTime() === today;
+    const { pickups, releases, returns } = getDayEventsPkg(d, branch);
+    const badges = [
+      pickups.length  ? `<span class="cal-badge cal-badge-pickup" title="Due for pickup">P·${pickups.length}</span>`   : "",
+      releases.length ? `<span class="cal-badge cal-badge-release" title="Currently released">O·${releases.length}</span>` : "",
+      returns.length  ? `<span class="cal-badge cal-badge-return" title="Due for return">R·${returns.length}</span>`  : "",
+    ].join("");
+    cells += `
+      <div class="cal-day-cell${isOtherMonth?" other-month":""}${isToday?" is-today":""}" data-date="${key}">
+        <div class="cal-day-num">${d.getDate()}</div>
+        <div class="cal-day-badges">${badges}</div>
+      </div>`;
+  }
+
+  return `
+    <div class="cal-grid">
+      <div class="cal-weekday-row">${CAL_WEEKDAYS.map(w=>`<div class="cal-weekday">${w}</div>`).join("")}</div>
+      <div class="cal-month-grid">${cells}</div>
+    </div>`;
+}
+
+function renderWeekViewPkg(refDate, branch) {
+  const weekStart = calAddDays(refDate, -refDate.getDay());
+  const weekEnd    = calAddDays(weekStart, 6);
+  const { pickups, releases, returns } = getRangeEventsPkg(weekStart, weekEnd, branch);
+  return renderBranchSectionsPkg(pickups, releases, returns, true);
+}
+
+function renderDayViewHTMLPkg(refDate, branch) {
+  const { pickups, releases, returns } = getDayEventsPkg(refDate, branch);
+  return `
+    <div class="cal-day-header">${calDayLabel(refDate)}</div>
+    ${renderBranchSectionsPkg(pickups, releases, returns, false)}`;
+}
+
+function renderPackageCalendar() {
+  const body = document.getElementById("pkgCalBody");
+  const titleEl = document.getElementById("pkgCalTitle");
+  if (!body) return;
+
+  document.querySelectorAll(".pkg-cal-view-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===PkgCalSt.view));
+
+  if (PkgCalSt.view === "month") {
+    if (titleEl) titleEl.textContent = calMonthLabel(PkgCalSt.current);
+    body.innerHTML = renderMonthViewPkg(PkgCalSt.current, PkgCalSt.branch);
+  } else if (PkgCalSt.view === "week") {
+    const weekStart = calAddDays(PkgCalSt.current, -PkgCalSt.current.getDay());
+    const weekEnd   = calAddDays(weekStart, 6);
+    if (titleEl) titleEl.textContent = calWeekLabel(weekStart, weekEnd);
+    body.innerHTML = renderWeekViewPkg(PkgCalSt.current, PkgCalSt.branch);
+  } else {
+    if (titleEl) titleEl.textContent = "";
+    body.innerHTML = renderDayViewHTMLPkg(PkgCalSt.current, PkgCalSt.branch);
+  }
+
+  body.querySelectorAll("[data-date]").forEach(el => {
+    el.addEventListener("click", () => {
+      PkgCalSt.current = new Date(el.dataset.date + "T00:00:00");
+      PkgCalSt.view = "day";
+      renderPackageCalendar();
+    });
+  });
+  body.querySelectorAll("[data-txn]").forEach(el => {
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      showTxnDrawer(el.dataset.txn);
+    });
+  });
+}
+
+function initPackageCalendarPage() {
+  document.querySelectorAll(".pkg-cal-view-btn").forEach(btn => {
+    btn.addEventListener("click", () => { PkgCalSt.view = btn.dataset.view; renderPackageCalendar(); });
+  });
+  document.getElementById("pkgCalPrev")?.addEventListener("click", () => {
+    if (PkgCalSt.view==="month") PkgCalSt.current = calAddMonths(PkgCalSt.current, -1);
+    else if (PkgCalSt.view==="week") PkgCalSt.current = calAddDays(PkgCalSt.current, -7);
+    else PkgCalSt.current = calAddDays(PkgCalSt.current, -1);
+    renderPackageCalendar();
+  });
+  document.getElementById("pkgCalNext")?.addEventListener("click", () => {
+    if (PkgCalSt.view==="month") PkgCalSt.current = calAddMonths(PkgCalSt.current, 1);
+    else if (PkgCalSt.view==="week") PkgCalSt.current = calAddDays(PkgCalSt.current, 7);
+    else PkgCalSt.current = calAddDays(PkgCalSt.current, 1);
+    renderPackageCalendar();
+  });
+  document.getElementById("pkgCalToday")?.addEventListener("click", () => {
+    PkgCalSt.current = new Date();
+    renderPackageCalendar();
+  });
+  document.getElementById("pkgCalFilterBranch")?.addEventListener("change", e => {
+    PkgCalSt.branch = e.target.value;
+    renderPackageCalendar();
+  });
+  renderPackageCalendar();
+}
+
 // ── BRANCH PAGES ──────────────────────────────────────────────
 // One page per branch (gorordo.html, mandaue.html, ...), each with
 // data-branch="GORORDO" etc. on <body>. Rather than duplicate all the
@@ -1271,6 +1460,7 @@ function renderCurrentPage() {
   else if (page==="packages")     renderPackages();
   else if (page==="quantity")     renderQuantity();
   else if (page==="calendar")     renderCalendar();
+  else if (page==="package-calendar") renderPackageCalendar();
   else if (page==="branch")       renderBranchPage();
   else if (page==="search")       { /* search renders on user action */ }
 }
@@ -1293,6 +1483,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="packages")     initPackagesPage();
     else if (page==="quantity")     initQuantityPage();
     else if (page==="calendar")     initCalendarPage();
+    else if (page==="package-calendar") initPackageCalendarPage();
     else if (page==="branch")       initBranchPage();
     else if (page==="search")       initItemSearchPage();
     else renderDashboard();
@@ -1307,6 +1498,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="packages")     initPackagesPage();
       else if (page==="quantity")     initQuantityPage();
       else if (page==="calendar")     initCalendarPage();
+      else if (page==="package-calendar") initPackageCalendarPage();
       else if (page==="branch")       initBranchPage();
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();
