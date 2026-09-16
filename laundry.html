@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Item Lookup — Noelle West</title>
+  <title>Laundry — Noelle West</title>
   <link rel="stylesheet" href="styles.css">
   <script>window.NW_GAS_URL = "https://script.google.com/macros/s/AKfycbyCmp459d8w0Nj717j3r8L5-kb5UA0feHJs5e_tmpt3deMTDyAAWzkYkVzG8v-AVYIU/exec";</script>
 </head>
-<body data-page="search">
+<body data-page="laundry">
   <div id="loadingOverlay" class="loading-overlay">
     <div class="spinner"></div>
     <p class="loading-text">LOADING DATA…</p>
@@ -25,7 +25,7 @@
         <a href="packages.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Packages</a>
         <a href="quantity.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Quantity</a>
         <div class="nav-section-label">Operations</div>
-        <a href="laundry.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M6 7v13a2 2 0 002 2h8a2 2 0 002-2V7M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/><circle cx="12" cy="14" r="3"/></svg>Laundry</a>
+        <a href="laundry.html" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M6 7v13a2 2 0 002 2h8a2 2 0 002-2V7M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/><circle cx="12" cy="14" r="3"/></svg>Laundry</a>
         <a href="pending-transactions.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Pending Payments</a>
         <div class="nav-section-label">Planning</div>
         <a href="calendar.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Calendar</a>
@@ -37,7 +37,7 @@
         <a href="ormoc.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Ormoc</a>
         <a href="tacloban.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Tacloban</a>
         <div class="nav-section-label">Search</div>
-        <a href="search.html" class="nav-link active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Item Lookup</a>
+        <a href="search.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Item Lookup</a>
       </div>
       <div class="sidebar-footer"><div class="last-updated" id="lastUpdated">Not yet synced</div></div>
     </nav>
@@ -47,7 +47,7 @@
         <button class="hamburger" id="hamburger">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <span class="topbar-title">Item Lookup</span>
+        <span class="topbar-title">Laundry</span>
       </div>
       <div class="topbar-right">
         <button class="btn-refresh">
@@ -61,29 +61,44 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <div><strong>Setup required:</strong> Set <code>window.NW_GAS_URL</code> in each HTML file. See <code>README.md</code>.</div>
       </div>
-        <div class="item-search-hero">
-          <h2>Item Lookup</h2>
-          <p>Search by item code, category, or branch. Click any result to view the full item profile with photos and rental history.</p>
-          <div class="item-search-row">
-            <div class="search-wrap">
-              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input type="text" id="itemSearchInput" class="search-input" placeholder="e.g. BGI-10000, MANDAUE, PGI…">
-            </div>
-            <select id="itemFilterCat" class="filter-select">
-              <option value="">All Categories</option>
-            </select>
-            <select id="itemFilterBranch" class="filter-select">
-              <option value="">All Branches</option>
-              <option value="GORORDO">Gorordo</option>
-              <option value="MANDAUE">Mandaue</option>
-              <option value="TALISAY">Talisay</option>
-              <option value="ORMOC">Ormoc</option>
-              <option value="TACLOBAN">Tacloban</option>
-            </select>
-            <button class="btn-search" id="itemSearchBtn">Search</button>
+
+        <div class="section-header">
+          <span class="section-title">Items For Laundry</span>
+        </div>
+        <div class="table-card">
+          <div class="table-header"><span class="table-title">Currently at Laundry</span><span class="table-count" id="laundryCount">—</span></div>
+          <div class="table-wrap">
+            <table id="laundryItemsTable">
+              <thead><tr><th>Item Code</th><th>Category</th><th>Branch</th><th>Customer</th><th>Picked Up</th><th>Returned</th><th>Weight</th></tr></thead>
+              <tbody id="laundryItemsBody"><tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Click Refresh to load data.</p></div></td></tr></tbody>
+            </table>
           </div>
         </div>
-        <div id="itemSearchResults"></div>
+
+        <div class="section-header" style="margin-top:28px">
+          <span class="section-title">Recent Laundry — Send To Laundry</span>
+        </div>
+        <div class="table-card">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th style="width:140px">Date</th><th>Items Laundered</th><th style="width:120px">Price</th></tr></thead>
+              <tbody id="sendToLaundryBody"><tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section-header" style="margin-top:28px">
+          <span class="section-title">Recent Laundry — Handwash</span>
+        </div>
+        <div class="table-card">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th style="width:140px">Date</th><th>Items Laundered</th><th style="width:120px">Price</th></tr></thead>
+              <tbody id="handwashBody"><tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>

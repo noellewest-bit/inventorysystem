@@ -12,6 +12,7 @@ const State = {
   packages:     [],
   quantity:     [],
   dashboard:    {},
+  laundry:      null, // lazy-loaded only on the Laundry page
   lastUpdated:  null,
 };
 
@@ -61,18 +62,16 @@ async function api(path, extraParams = {}) {
 async function refreshAll() {
   setLoading(true);
   try {
-    const [inv, txns, pkgs, qty, dash] = await Promise.all([
-      api("inventory"),
-      api("transactions"),
-      api("packages"),
-      api("quantity"),
-      api("dashboard"),
-    ]);
-    State.inventory    = inv   || [];
-    State.transactions = txns  || [];
-    State.packages     = pkgs  || [];
-    State.quantity     = qty   || [];
-    State.dashboard    = dash  || {};
+    // One consolidated call instead of 5 separate ones — each of those
+    // used to independently trigger a full buildAll() on the backend
+    // (re-scanning every sheet from scratch), so 5 requests meant 5x
+    // the work on every single page load. This does it once.
+    const all = await api("all");
+    State.inventory    = all.inventory    || [];
+    State.transactions = all.transactions || [];
+    State.packages     = all.packages     || [];
+    State.quantity     = all.quantity     || [];
+    State.dashboard    = all.dashboard    || {};
     State.lastUpdated  = new Date();
     saveCache();
     renderCurrentPage();
@@ -117,7 +116,6 @@ function loadCache() {
     return true;
   } catch(e) { return false; }
 }
-
 // ── UI Helpers ────────────────────────────────────────────────
 function setLoading(v) {
   const el = document.getElementById("loadingOverlay");
@@ -255,6 +253,39 @@ function closeDrawer() {
 function initDrawer() {
   document.getElementById("drawerOverlay")?.addEventListener("click", closeDrawer);
   document.getElementById("drawerClose")?.addEventListener("click", closeDrawer);
+}
+
+// ── Photo Lightbox ────────────────────────────────────────────
+function openLightbox(photo) {
+  const overlay = document.getElementById("photoLightbox");
+  if (!overlay || !photo) return;
+  const img  = document.getElementById("lightboxImg");
+  const name = document.getElementById("lightboxName");
+  const link = document.getElementById("lightboxDriveLink");
+  if (img)  img.src = photo.displayUrl || "";
+  if (name) name.textContent = photo.name || "";
+  if (link) link.href = photo.directUrl || photo.displayUrl || "#";
+  overlay.classList.add("open");
+}
+
+function closeLightbox() {
+  document.getElementById("photoLightbox")?.classList.remove("open");
+}
+
+function initLightbox() {
+  document.getElementById("photoLightbox")?.addEventListener("click", (e) => {
+    if (e.target.id === "photoLightbox") closeLightbox();
+  });
+  document.getElementById("lightboxClose")?.addEventListener("click", closeLightbox);
+}
+
+// Attaches click-to-enlarge behavior to the photo tiles just rendered
+// by photoGalleryHTML() inside `container`.
+function attachPhotoLightbox(container, photos) {
+  if (!container) return;
+  container.querySelectorAll(".photo-item").forEach((el, i) => {
+    el.addEventListener("click", () => openLightbox(photos[i]));
+  });
 }
 
 // ── Sortable / Paginate ───────────────────────────────────────
@@ -494,7 +525,9 @@ function loadDrawerPhotos() {
   const code = container.dataset.code;
   if (!code) return;
   // photoLinks are already in State.inventory — render immediately, no fetch.
-  container.innerHTML = photoGalleryHTML(code);
+  const photos = getPhotosForItem(code);
+  container.innerHTML = photoGalleryHTML(code, photos);
+  attachPhotoLightbox(container, photos);
 }
 
 function initInventoryPage() {
@@ -539,7 +572,9 @@ function loadProfilePhotos() {
   if (!el) return;
   const code = el.dataset.code;
   if (!code) return;
-  el.innerHTML = photoGalleryHTML(code);
+  const photos = getPhotosForItem(code);
+  el.innerHTML = photoGalleryHTML(code, photos);
+  attachPhotoLightbox(el, photos);
 }
 
 function runItemSearch() {
@@ -1274,6 +1309,149 @@ function initPackageCalendarPage() {
   renderPackageCalendar();
 }
 
+// ── LAUNDRY PAGE ──────────────────────────────────────────────
+function renderLaundryItems() {
+  const tbody = document.getElementById("laundryItemsBody");
+  const countEl = document.getElementById("laundryCount");
+  if (!tbody) return;
+  const items = State.inventory.filter(i => i.status === "FOR LAUNDRY");
+  if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Nothing currently at laundry.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr class="td-clickable" data-code="${esc(i.code)}">
+      <td class="td-code">${esc(i.code)}</td>
+      <td>${esc(i.category)||"—"}</td>
+      <td>${esc(i.branch)||"—"}</td>
+      <td>${esc(i.customer)||"—"}</td>
+      <td>${fmtDate(i.pickupDate)}</td>
+      <td>${fmtDate(i.returnDate)}</td>
+      <td style="font-family:var(--ff-mono)">${fmtWeight(i.weight)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showItemDrawer(r.dataset.code)));
+}
+
+function renderLaundrySubmissions() {
+  const renderInto = (list, tbody) => {
+    if (!tbody) return;
+    if (!list || !list.length) {
+      tbody.innerHTML = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">No recent submissions found.</p></div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map(s => `
+      <tr>
+        <td>${fmtDate(s.date)}</td>
+        <td style="white-space:pre-wrap;font-size:.78rem">${esc(s.items)||"—"}</td>
+        <td style="font-family:var(--ff-mono)">${s.price!=null ? fmtMoney(s.price) : "—"}</td>
+      </tr>`).join("");
+  };
+  renderInto(State.laundry && State.laundry.handwash,      document.getElementById("handwashBody"));
+  renderInto(State.laundry && State.laundry.sendToLaundry, document.getElementById("sendToLaundryBody"));
+}
+
+async function loadLaundrySubmissions() {
+  const hwBody  = document.getElementById("handwashBody");
+  const stlBody = document.getElementById("sendToLaundryBody");
+  const loading = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr>`;
+  if (hwBody)  hwBody.innerHTML  = loading;
+  if (stlBody) stlBody.innerHTML = loading;
+  try {
+    State.laundry = await api("laundry");
+    renderLaundrySubmissions();
+  } catch (e) {
+    const failed = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Could not load recent submissions.</p></div></td></tr>`;
+    if (hwBody)  hwBody.innerHTML  = failed;
+    if (stlBody) stlBody.innerHTML = failed;
+  }
+}
+
+function initLaundryPage() {
+  renderLaundryItems();
+  loadLaundrySubmissions(); // separate lightweight call, not part of the main "all" payload
+}
+
+function renderLaundryPage() {
+  renderLaundryItems();
+  if (State.laundry) renderLaundrySubmissions();
+}
+
+// ── PENDING TRANSACTIONS PAGE ─────────────────────────────────
+const PendSt = { search:"", filter:"", branch:"", page:1 };
+
+function getPendingTransactions() {
+  return State.transactions.filter(t =>
+    t.grandTotal !== null && t.grandTotal !== undefined && (t.remainingBalance||0) > 0.005
+  );
+}
+
+function isOverdue(t) {
+  if (!t.pickupDate) return false;
+  return calStartOfDay(new Date(t.pickupDate)).getTime() < calStartOfDay(new Date()).getTime();
+}
+
+function pendingStatusLabel(t) {
+  return (t.totalPaid||0) <= 0.005 ? "UNPAID" : "PARTIALLY PAID";
+}
+
+function renderPendingTransactions() {
+  const tbody = document.getElementById("pendingBody");
+  const countEl = document.getElementById("pendingCount");
+  if (!tbody) return;
+
+  let list = getPendingTransactions();
+  if (PendSt.branch) list = list.filter(t => t.branch === PendSt.branch);
+  if (PendSt.filter === "UNPAID")          list = list.filter(t => pendingStatusLabel(t)==="UNPAID");
+  else if (PendSt.filter === "PARTIAL")    list = list.filter(t => pendingStatusLabel(t)==="PARTIALLY PAID");
+  else if (PendSt.filter === "OVERDUE")    list = list.filter(isOverdue);
+  if (PendSt.search) {
+    const q = PendSt.search.toLowerCase();
+    list = list.filter(t => (t.txnNum||"").toLowerCase().includes(q) || (t.customer||"").toLowerCase().includes(q));
+  }
+
+  // Overdue first, then by remaining balance descending
+  list = list.slice().sort((a,b) => {
+    const ao = isOverdue(a), bo = isOverdue(b);
+    if (ao !== bo) return ao ? -1 : 1;
+    return (b.remainingBalance||0) - (a.remainingBalance||0);
+  });
+
+  if (countEl) countEl.textContent = list.length + (list.length===1?" transaction":" transactions");
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><p class="empty-sub">Nothing pending — everything's paid up.</p></div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(t => {
+    const overdue = isOverdue(t);
+    const statusLabel = pendingStatusLabel(t);
+    return `
+    <tr class="td-clickable" data-txn="${esc(t.txnNum)}">
+      <td class="td-txn">${esc(t.txnNum)}</td>
+      <td>${esc(t.customer)||"—"}</td>
+      <td>${esc(t.branch)||"—"}</td>
+      <td>${fmtDate(t.pickupDate)}</td>
+      <td style="font-family:var(--ff-mono)">${fmtMoney(t.grandTotal)}</td>
+      <td style="font-family:var(--ff-mono)">${fmtMoney(t.totalPaid)}</td>
+      <td style="font-family:var(--ff-mono);font-weight:600">${fmtMoney(t.remainingBalance)}</td>
+      <td>
+        <span class="badge ${statusLabel==='UNPAID'?'badge-missing':'badge-pending'}">${statusLabel}</span>
+        ${overdue?'<span class="badge badge-missing" style="margin-left:4px">OVERDUE</span>':''}
+      </td>
+    </tr>`;
+  }).join("");
+  tbody.querySelectorAll("tr[data-txn]").forEach(r=>r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn)));
+}
+
+function initPendingPage() {
+  document.getElementById("pendSearch")?.addEventListener("input", e=>{PendSt.search=e.target.value; renderPendingTransactions();});
+  document.getElementById("pendFilterStatus")?.addEventListener("change", e=>{PendSt.filter=e.target.value; renderPendingTransactions();});
+  document.getElementById("pendFilterBranch")?.addEventListener("change", e=>{PendSt.branch=e.target.value; renderPendingTransactions();});
+  renderPendingTransactions();
+}
+
 // ── BRANCH PAGES ──────────────────────────────────────────────
 // One page per branch (gorordo.html, mandaue.html, ...), each with
 // data-branch="GORORDO" etc. on <body>. Rather than duplicate all the
@@ -1461,6 +1639,8 @@ function renderCurrentPage() {
   else if (page==="quantity")     renderQuantity();
   else if (page==="calendar")     renderCalendar();
   else if (page==="package-calendar") renderPackageCalendar();
+  else if (page==="laundry")      renderLaundryPage();
+  else if (page==="pending")      renderPendingTransactions();
   else if (page==="branch")       renderBranchPage();
   else if (page==="search")       { /* search renders on user action */ }
 }
@@ -1469,6 +1649,7 @@ function renderCurrentPage() {
 document.addEventListener("DOMContentLoaded", async () => {
   initSidebar();
   initDrawer();
+  initLightbox();
 
   if (!GAS_URL) document.querySelectorAll(".config-banner").forEach(b=>b.style.display="flex");
 
@@ -1484,6 +1665,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="quantity")     initQuantityPage();
     else if (page==="calendar")     initCalendarPage();
     else if (page==="package-calendar") initPackageCalendarPage();
+    else if (page==="laundry")      initLaundryPage();
+    else if (page==="pending")      initPendingPage();
     else if (page==="branch")       initBranchPage();
     else if (page==="search")       initItemSearchPage();
     else renderDashboard();
@@ -1499,6 +1682,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="quantity")     initQuantityPage();
       else if (page==="calendar")     initCalendarPage();
       else if (page==="package-calendar") initPackageCalendarPage();
+      else if (page==="laundry")      initLaundryPage();
+      else if (page==="pending")      initPendingPage();
       else if (page==="branch")       initBranchPage();
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();
