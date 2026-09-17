@@ -732,7 +732,7 @@ function renderTransactions(sortCol,sortDir) {
   const cEl=document.getElementById("txnCount");
   if (cEl) cEl.textContent=`${p.total} transactions`;
   if (!p.items.length) {
-    tbody.innerHTML=`<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">No transactions found</p></div></td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="8"><div class="empty-state"><p class="empty-sub">No transactions found</p></div></td></tr>`;
   } else {
     tbody.innerHTML=p.items.map(t=>`
       <tr class="td-clickable" data-txn="${esc(t.txnNum)}">
@@ -741,8 +741,9 @@ function renderTransactions(sortCol,sortDir) {
         <td>${esc(t.branch)||"—"}</td>
         <td>${esc(t.txnType)||"—"}</td>
         <td>${esc(t.packageType)||"—"}</td>
-        <td>${statusBadge(t.txnStatus)}</td>
+        <td>${t.cancelled?'<span class="badge badge-missing">CANCELLED</span>':statusBadge(t.txnStatus)}</td>
         <td>${fmtDate(t.pickupDate)}</td>
+        <td>${t.editUrl?`<a href="${esc(t.editUrl)}" target="_blank" rel="noopener" class="td-edit-link" onclick="event.stopPropagation()">Edit ↗</a>`:"—"}</td>
       </tr>`).join("");
     tbody.querySelectorAll("tr[data-txn]").forEach(r=>r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn)));
   }
@@ -814,16 +815,20 @@ function showTxnDrawer(txnNum) {
   let ledgerSection = "";
   if (hasGrandTotal) {
     const isFullyPaid = t.remainingBalance !== null && t.remainingBalance <= 0.005;
+    const statusBadgeHTML = t.cancelled
+      ? `<span class="badge badge-missing">CANCELLED</span>`
+      : `<span class="badge ${isFullyPaid?"badge-available":"badge-pending"}">${isFullyPaid?"FULLY PAID":"PARTIALLY PAID"}</span>`;
     ledgerSection = `
       <div style="margin-top:16px">
         <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Payment Status</div>
-        ${ledgerRow("GRAND TOTAL", fmtMoney(t.grandTotal))}
-        ${ledgerRow("+ FIRST PAYMENT", fmtMoney(t.initialAmountPaid||0))}
-        ${ledgerRow("+ ADDITIONAL PAYMENTS", fmtMoney(paymentsSum))}
-        ${ledgerRow("- REFUNDS", fmtMoney(-refundsSum))}
+        ${ledgerRow("TOTAL AMOUNT DUE", fmtMoney(t.grandTotal))}
+        ${t.discount ? ledgerRow("- DISCOUNT", fmtMoney(-t.discount)) : ""}
+        ${ledgerRow("- FIRST PAYMENT", fmtMoney(-(t.initialAmountPaid||0)))}
+        ${ledgerRow("- ADDITIONAL PAYMENTS", fmtMoney(-paymentsSum))}
+        ${ledgerRow("+ REFUNDS", fmtMoney(refundsSum))}
         ${ledgerRow("= REMAINING BALANCE", fmtMoney(t.remainingBalance), true)}
         <div style="margin-top:10px;text-align:center">
-          <span class="badge ${isFullyPaid?"badge-available":"badge-pending"}">${isFullyPaid?"FULLY PAID":"PARTIALLY PAID"}</span>
+          ${statusBadgeHTML}
         </div>
       </div>`;
   } else {
@@ -898,6 +903,7 @@ function getDayEvents(dateObj, branch) {
   const day = calStartOfDay(dateObj).getTime();
   const pickups = [], releases = [], returns = [];
   for (const t of State.transactions) {
+    if (t.cancelled) continue;
     if (branch && t.branch !== branch) continue;
     const p = t.pickupDate ? calStartOfDay(new Date(t.pickupDate)).getTime() : null;
     const r = (!t.isRetail && t.returnDate) ? calStartOfDay(new Date(t.returnDate)).getTime() : null;
@@ -989,6 +995,7 @@ function getRangeEvents(startDate, endDate, branch) {
   const endTS   = calStartOfDay(endDate).getTime();
   const pickups = [], releases = [], returns = [];
   for (const t of State.transactions) {
+    if (t.cancelled) continue;
     if (branch && t.branch !== branch) continue;
     const p = t.pickupDate ? calStartOfDay(new Date(t.pickupDate)).getTime() : null;
     const r = (!t.isRetail && t.returnDate) ? calStartOfDay(new Date(t.returnDate)).getTime() : null;
@@ -1324,14 +1331,56 @@ function initPackageCalendarPage() {
 }
 
 // ── LAUNDRY PAGE ──────────────────────────────────────────────
-function renderLaundryItems() {
-  const tbody = document.getElementById("laundryItemsBody");
-  const countEl = document.getElementById("laundryCount");
+// Two item-status tabs: "For Laundry" (returned, not yet appeared on
+// either laundry form) and "Laundered" (already showed up on one of
+// the forms, so it's back to AVAILABLE) — plus the raw submission
+// tables for both forms. Clicking any item opens its own laundry
+// history, built from whichever submissions mention its item code.
+function getItemLaundryHistory(code) {
+  const codeUp = (code||"").toUpperCase();
+  const stl = ((State.laundry && State.laundry.sendToLaundry) || [])
+    .filter(s => (s.itemCodes||[]).includes(codeUp)).map(s => ({...s, kind:"Send To Laundry"}));
+  const hw  = ((State.laundry && State.laundry.handwash) || [])
+    .filter(s => (s.itemCodes||[]).includes(codeUp)).map(s => ({...s, kind:"Handwash"}));
+  return [...stl, ...hw].sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
+}
+
+function showLaundryHistoryDrawer(code) {
+  const item = State.inventory.find(i => i.code === code);
+  const history = getItemLaundryHistory(code);
+  const rows = history.length ? history.map(s => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--cloud);font-size:.8rem">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="meta-pill">${esc(s.kind)}</span>
+        <span>${fmtDate(s.date)}</span>
+      </div>
+      <div style="margin-top:6px;color:var(--mist)">Submission ID: ${esc(s.submissionId)||"—"} · Branch: ${esc(s.branch)||"—"}</div>
+      ${s.kind==="Send To Laundry"
+        ? `<div style="margin-top:4px">Pickup: ${fmtDate(s.pickupDate)} · Total Kilos: ${s.totalKilos??"—"} · Prepared By: ${esc(s.preparedBy)||"—"}</div>`
+        : `<div style="margin-top:4px">Rate/Kilo: ${s.ratePerKilo!=null?fmtMoney(s.ratePerKilo):"—"} · Total Weight: ${s.totalWeight??"—"}</div>
+           <div style="margin-top:2px">Prepared By: ${esc(s.preparedBy)||"—"} · Paid By: ${esc(s.paidBy)||"—"} · Launderer: ${esc(s.launderer)||"—"}</div>`}
+      <div style="margin-top:4px;font-family:var(--ff-mono)">Amount: ${s.amount!=null?fmtMoney(s.amount):"—"}</div>
+    </div>`).join("") : `<p style="color:var(--mist);font-size:.8rem">No laundry submissions found mentioning this item code yet.</p>`;
+
+  const html = `
+    <div class="detail-row"><span class="detail-label">Item Code</span><span class="detail-value td-code">${esc(code)}</span></div>
+    ${item?`<div class="detail-row"><span class="detail-label">Category</span><span class="detail-value">${esc(item.category)||"—"}</span></div>`:""}
+    ${item?`<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(item.status)}</span></div>`:""}
+    <div style="margin-top:16px">
+      <div style="font-family:var(--ff-mono);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-bottom:8px">Laundry History (${history.length})</div>
+      ${rows}
+    </div>`;
+  openDrawer(html, code, "Laundry History");
+}
+
+function renderForLaundryTab() {
+  const tbody = document.getElementById("forLaundryBody");
+  const countEl = document.getElementById("forLaundryCount");
   if (!tbody) return;
   const items = State.inventory.filter(i => i.status === "FOR LAUNDRY");
   if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Nothing currently at laundry.</p></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><p class="empty-sub">Nothing currently waiting to be sent to laundry.</p></div></td></tr>`;
     return;
   }
   tbody.innerHTML = items.map(i => `
@@ -1342,52 +1391,105 @@ function renderLaundryItems() {
       <td>${esc(i.customer)||"—"}</td>
       <td>${fmtDate(i.pickupDate)}</td>
       <td>${fmtDate(i.returnDate)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showLaundryHistoryDrawer(r.dataset.code)));
+}
+
+function renderLaunderedTab() {
+  const tbody = document.getElementById("launderedBody");
+  const countEl = document.getElementById("launderedCount");
+  if (!tbody) return;
+  const items = State.inventory.filter(i => i.status === "AVAILABLE" && i.recentlyLaundered);
+  if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><p class="empty-sub">No recently laundered items.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr class="td-clickable" data-code="${esc(i.code)}">
+      <td class="td-code">${esc(i.code)}</td>
+      <td>${esc(i.category)||"—"}</td>
+      <td>${esc(i.branch)||"—"}</td>
       <td style="font-family:var(--ff-mono)">${fmtWeight(i.weight)}</td>
     </tr>`).join("");
-  tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showItemDrawer(r.dataset.code)));
+  tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showLaundryHistoryDrawer(r.dataset.code)));
 }
 
 function renderLaundrySubmissions() {
-  const renderInto = (list, tbody) => {
-    if (!tbody) return;
+  const stlBody = document.getElementById("sendToLaundryBody");
+  if (stlBody) {
+    const list = State.laundry && State.laundry.sendToLaundry;
     if (!list || !list.length) {
-      tbody.innerHTML = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">No recent submissions found.</p></div></td></tr>`;
-      return;
+      stlBody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">No recent submissions found.</p></div></td></tr>`;
+    } else {
+      stlBody.innerHTML = list.map(s => `
+        <tr>
+          <td>${esc(s.submissionId)||"—"}</td>
+          <td>${fmtDate(s.date)}</td>
+          <td style="white-space:pre-wrap;font-size:.78rem">${esc(s.items)||"—"}</td>
+          <td>${esc(s.branch)||"—"}</td>
+          <td style="font-family:var(--ff-mono)">${s.amount!=null?fmtMoney(s.amount):"—"}</td>
+          <td>${fmtDate(s.pickupDate)}</td>
+          <td style="font-family:var(--ff-mono)">${s.totalKilos??"—"}</td>
+        </tr>`).join("");
     }
-    tbody.innerHTML = list.map(s => `
-      <tr>
-        <td>${fmtDate(s.date)}</td>
-        <td style="white-space:pre-wrap;font-size:.78rem">${esc(s.items)||"—"}</td>
-        <td style="font-family:var(--ff-mono)">${s.price!=null ? fmtMoney(s.price) : "—"}</td>
-      </tr>`).join("");
-  };
-  renderInto(State.laundry && State.laundry.handwash,      document.getElementById("handwashBody"));
-  renderInto(State.laundry && State.laundry.sendToLaundry, document.getElementById("sendToLaundryBody"));
+  }
+  const hwBody = document.getElementById("handwashBody");
+  if (hwBody) {
+    const list = State.laundry && State.laundry.handwash;
+    if (!list || !list.length) {
+      hwBody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><p class="empty-sub">No recent submissions found.</p></div></td></tr>`;
+    } else {
+      hwBody.innerHTML = list.map(s => `
+        <tr>
+          <td>${esc(s.submissionId)||"—"}</td>
+          <td>${fmtDate(s.date)}</td>
+          <td style="white-space:pre-wrap;font-size:.78rem">${esc(s.items)||"—"}</td>
+          <td>${esc(s.branch)||"—"}</td>
+          <td style="font-family:var(--ff-mono)">${s.amount!=null?fmtMoney(s.amount):"—"}</td>
+          <td>${esc(s.launderer)||"—"}</td>
+          <td>${esc(s.paidBy)||"—"}</td>
+          <td style="font-family:var(--ff-mono)">${s.totalWeight??"—"}</td>
+        </tr>`).join("");
+    }
+  }
 }
 
 async function loadLaundrySubmissions() {
   const hwBody  = document.getElementById("handwashBody");
   const stlBody = document.getElementById("sendToLaundryBody");
-  const loading = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr>`;
-  if (hwBody)  hwBody.innerHTML  = loading;
-  if (stlBody) stlBody.innerHTML = loading;
+  const loadingSTL = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr>`;
+  const loadingHW  = `<tr><td colspan="8"><div class="empty-state"><p class="empty-sub">Loading…</p></div></td></tr>`;
+  if (stlBody) stlBody.innerHTML = loadingSTL;
+  if (hwBody)  hwBody.innerHTML  = loadingHW;
   try {
     State.laundry = await api("laundry");
     renderLaundrySubmissions();
   } catch (e) {
-    const failed = `<tr><td colspan="3"><div class="empty-state"><p class="empty-sub">Could not load recent submissions.</p></div></td></tr>`;
-    if (hwBody)  hwBody.innerHTML  = failed;
-    if (stlBody) stlBody.innerHTML = failed;
+    const failedSTL = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Could not load recent submissions.</p></div></td></tr>`;
+    const failedHW  = `<tr><td colspan="8"><div class="empty-state"><p class="empty-sub">Could not load recent submissions.</p></div></td></tr>`;
+    if (stlBody) stlBody.innerHTML = failedSTL;
+    if (hwBody)  hwBody.innerHTML  = failedHW;
   }
 }
 
 function initLaundryPage() {
-  renderLaundryItems();
+  const btns = document.querySelectorAll(".tab-btn");
+  const panels = document.querySelectorAll(".tab-panel");
+  btns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      btns.forEach(b=>b.classList.toggle("active", b===btn));
+      panels.forEach(p=>p.classList.toggle("active", p.id === "panel-"+btn.dataset.tab));
+    });
+  });
+  renderForLaundryTab();
+  renderLaunderedTab();
   loadLaundrySubmissions(); // separate lightweight call, not part of the main "all" payload
 }
 
 function renderLaundryPage() {
-  renderLaundryItems();
+  renderForLaundryTab();
+  renderLaunderedTab();
   if (State.laundry) renderLaundrySubmissions();
 }
 
@@ -1396,8 +1498,12 @@ const PendSt = { search:"", filter:"", branch:"", page:1 };
 
 function getPendingTransactions() {
   return State.transactions.filter(t =>
-    t.grandTotal !== null && t.grandTotal !== undefined && (t.remainingBalance||0) > 0.005
+    !t.cancelled && t.grandTotal !== null && t.grandTotal !== undefined && (t.remainingBalance||0) > 0.005
   );
+}
+
+function getCancelledTransactions() {
+  return State.transactions.filter(t => t.cancelled);
 }
 
 function isOverdue(t) {
@@ -1463,7 +1569,72 @@ function initPendingPage() {
   document.getElementById("pendSearch")?.addEventListener("input", e=>{PendSt.search=e.target.value; renderPendingTransactions();});
   document.getElementById("pendFilterStatus")?.addEventListener("change", e=>{PendSt.filter=e.target.value; renderPendingTransactions();});
   document.getElementById("pendFilterBranch")?.addEventListener("change", e=>{PendSt.branch=e.target.value; renderPendingTransactions();});
+  document.getElementById("pendExportBtn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Generating…";
+    try {
+      const result = await api("exportPending");
+      if (result && result.url) {
+        window.open(result.url, "_blank");
+        showToast("Google Sheet created");
+      } else {
+        showToast("Could not generate sheet", true);
+      }
+    } catch (err) {
+      showToast("Error: " + err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
   renderPendingTransactions();
+}
+
+// ── CANCELLED TRANSACTIONS PAGE ───────────────────────────────
+const CancelledSt = { search:"", branch:"" };
+
+function renderCancelledTransactions() {
+  const tbody = document.getElementById("cancelledBody");
+  const countEl = document.getElementById("cancelledCount");
+  if (!tbody) return;
+
+  let list = getCancelledTransactions();
+  if (CancelledSt.branch) list = list.filter(t => t.branch === CancelledSt.branch);
+  if (CancelledSt.search) {
+    const q = CancelledSt.search.toLowerCase();
+    list = list.filter(t => (t.txnNum||"").toLowerCase().includes(q) || (t.customer||"").toLowerCase().includes(q));
+  }
+  list = list.slice().sort((a,b) => (b.rowSeq||0) - (a.rowSeq||0));
+
+  if (countEl) countEl.textContent = list.length + (list.length===1?" transaction":" transactions");
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">No cancelled transactions found.</p></div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(t => {
+    const refundsSum = (t.refunds||[]).reduce((s,r)=>s+r.amountRefunded,0);
+    return `
+    <tr class="td-clickable" data-txn="${esc(t.txnNum)}">
+      <td class="td-txn">${esc(t.txnNum)}</td>
+      <td>${esc(t.customer)||"—"}</td>
+      <td>${esc(t.branch)||"—"}</td>
+      <td style="font-family:var(--ff-mono)">${fmtMoney(t.grandTotal)}</td>
+      <td style="font-family:var(--ff-mono)">${fmtMoney(refundsSum)}</td>
+      <td style="font-family:var(--ff-mono)">${fmtMoney(t.remainingBalance)}</td>
+      <td><span class="badge badge-missing">CANCELLED</span></td>
+    </tr>`;
+  }).join("");
+  tbody.querySelectorAll("tr[data-txn]").forEach(r=>r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn)));
+}
+
+function initCancelledPage() {
+  document.getElementById("cancSearch")?.addEventListener("input", e=>{CancelledSt.search=e.target.value; renderCancelledTransactions();});
+  document.getElementById("cancFilterBranch")?.addEventListener("change", e=>{CancelledSt.branch=e.target.value; renderCancelledTransactions();});
+  renderCancelledTransactions();
 }
 
 // ── RESERVED PAGE (system-wide, grouped/sortable by branch) ──
@@ -1525,6 +1696,7 @@ const SoldSt = { search:"", branch:"" };
 function getRecentlySoldRows() {
   const rows = [];
   for (const t of State.transactions) {
+    if (t.cancelled) continue;
     if (t.isRetail || (t.txnType||"").toLowerCase()==="retail") {
       const items = [...(t.trackedItems||[])];
       Object.entries(t.qtyItems||{}).forEach(([k,v]) => items.push(v>1 ? `${k} ×${v}` : k));
@@ -1817,6 +1989,7 @@ function renderCurrentPage() {
   else if (page==="laundry")      renderLaundryPage();
   else if (page==="pending")      renderPendingTransactions();
   else if (page==="reserved")     renderReservedPage();
+  else if (page==="cancelled")    renderCancelledTransactions();
   else if (page==="recently-sold") renderRecentlySoldPage();
   else if (page==="branch")       renderBranchPage();
   else if (page==="search")       { /* search renders on user action */ }
@@ -1845,6 +2018,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="laundry")      initLaundryPage();
     else if (page==="pending")      initPendingPage();
     else if (page==="reserved")     initReservedPage();
+    else if (page==="cancelled")    initCancelledPage();
     else if (page==="recently-sold") initRecentlySoldPage();
     else if (page==="branch")       initBranchPage();
     else if (page==="search")       initItemSearchPage();
@@ -1864,6 +2038,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="laundry")      initLaundryPage();
       else if (page==="pending")      initPendingPage();
       else if (page==="reserved")     initReservedPage();
+      else if (page==="cancelled")    initCancelledPage();
       else if (page==="recently-sold") initRecentlySoldPage();
       else if (page==="branch")       initBranchPage();
       else if (page==="search")       initItemSearchPage();

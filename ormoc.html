@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ormoc — Noelle West</title>
   <link rel="stylesheet" href="styles.css">
-  <script>window.NW_GAS_URL = "https://script.google.com/macros/s/AKfycbwrhQdckUqiohIV9pUgufPXyp5xTc2bUAzrmINQVI9PcNXh8Vjp6JyTxEx_aSO2Az8J/exec";</script>
+  <script>window.NW_GAS_URL = "https://script.google.com/macros/s/AKfycbxG0hbJAyrGunWP1_jk3YUWh1d5T8E05BE4Fzua-nGzh7IbcwqpHLper3gi_smBQfbX/exec";</script>
 </head>
 <body data-page="branch" data-branch="ORMOC">
   <div id="loadingOverlay" class="loading-overlay">
@@ -27,6 +27,7 @@
         <div class="nav-section-label">Operations</div>
         <a href="laundry.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18M6 7v13a2 2 0 002 2h8a2 2 0 002-2V7M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"/><circle cx="12" cy="14" r="3"/></svg>Laundry</a>
         <a href="pending-transactions.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Pending Payments</a>
+        <a href="cancelled.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Cancelled</a>
         <a href="reserved.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M12 14v3l2 1"/></svg>Reserved</a>
         <a href="recently-sold.html" class="nav-link "><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41L11 3.83A2 2 0 009.59 3.24L4 3a1 1 0 00-1 1l.24 5.59a2 2 0 00.58 1.41l9.59 9.59a2 2 0 002.83 0l4.35-4.35a2 2 0 000-2.83z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>Recently Sold</a>
         <div class="nav-section-label">Planning</div>
@@ -130,7 +131,7 @@
             <div class="table-header"><span class="table-title">Ormoc Transactions</span><span class="table-count" id="txnCount">—</span></div>
             <div class="table-wrap">
               <table id="txnTable">
-                <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Type</th><th>Package</th><th>Status</th><th>Pickup Date</th></tr></thead>
+                <thead><tr><th>Transaction #</th><th>Customer</th><th>Branch</th><th>Type</th><th>Package</th><th>Status</th><th>Pickup Date</th><th>Edit</th></tr></thead>
                 <tbody id="txnBody"><tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Click Refresh to load transactions.</p></div></td></tr></tbody>
               </table>
             </div>

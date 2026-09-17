@@ -165,6 +165,8 @@ tbody td { padding: 10px 14px; color: var(--ink); vertical-align: middle; }
 .td-cat  { font-family: var(--ff-mono); font-size: .68rem; color: var(--mist); }
 .td-txn  { font-family: var(--ff-mono); font-size: .73rem; color: var(--blush-deep); }
 .td-clickable { cursor: pointer; }
+.td-edit-link { font-family: var(--ff-mono); font-size: .72rem; color: var(--blush-deep); text-decoration: none; font-weight: 600; }
+.td-edit-link:hover { text-decoration: underline; }
 
 /* ── Pagination ── */
 .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-top: 1px solid var(--cloud); flex-wrap: wrap; gap: 8px; }
