@@ -59,6 +59,14 @@ async function api(path, extraParams = {}) {
   }
 }
 
+// Newest-added-first within each category (no absolute cross-category
+// timestamp exists, so row position in the sheet — captured server-side
+// as addedSeq — is the best available proxy for recency). Sorted once
+// here so every page's default (unsorted) view benefits automatically.
+function sortInventoryByRecency(arr) {
+  return arr.slice().sort((a,b) => (b.addedSeq??-1) - (a.addedSeq??-1));
+}
+
 async function refreshAll() {
   setLoading(true);
   try {
@@ -67,7 +75,7 @@ async function refreshAll() {
     // (re-scanning every sheet from scratch), so 5 requests meant 5x
     // the work on every single page load. This does it once.
     const all = await api("all");
-    State.inventory    = all.inventory    || [];
+    State.inventory    = sortInventoryByRecency(all.inventory || []);
     State.transactions = all.transactions || [];
     State.packages     = all.packages     || [];
     State.quantity     = all.quantity     || [];
@@ -107,7 +115,7 @@ function loadCache() {
     const raw = sessionStorage.getItem("nw_v4");
     if (!raw) return false;
     const c = JSON.parse(raw);
-    State.inventory    = c.inventory    || [];
+    State.inventory    = sortInventoryByRecency(c.inventory || []);
     State.transactions = c.transactions || [];
     State.packages     = c.packages     || [];
     State.quantity     = c.quantity     || [];
@@ -142,6 +150,7 @@ function statusBadge(status) {
   const map = {
     "AVAILABLE":                "available",
     "RELEASED":                 "released",
+    "RESERVED":                 "reserved",
     "FOR LAUNDRY":              "laundry",
     "SOLD":                     "sold",
     "SOLD OUT":                 "sold",
@@ -408,6 +417,11 @@ const InvSt = { search:"", status:"", branch:"", category:"", sortCol:-1, sortDi
 
 function filterInv() {
   let data = State.inventory;
+  // Branch pages keep sold-out items out of the main Inventory list —
+  // they live in their own "Sold Out" tab instead.
+  if (document.body.dataset.page === "branch") {
+    data = data.filter(i => i.status !== "SOLD" && i.status !== "SOLD OUT");
+  }
   const q = InvSt.search.toLowerCase().trim();
   if (q) data = data.filter(i =>
     (i.code||"").toLowerCase().includes(q) ||
@@ -1452,6 +1466,113 @@ function initPendingPage() {
   renderPendingTransactions();
 }
 
+// ── RESERVED PAGE (system-wide, grouped/sortable by branch) ──
+const ReservedSt = { search:"", branch:"" };
+
+function renderReservedPage() {
+  const tbody = document.getElementById("reservedAllBody");
+  const countEl = document.getElementById("reservedAllCount");
+  if (!tbody) return;
+  let items = State.inventory.filter(i => i.status === "RESERVED");
+  if (ReservedSt.branch) items = items.filter(i => i.branch === ReservedSt.branch);
+  if (ReservedSt.search) {
+    const q = ReservedSt.search.toLowerCase();
+    items = items.filter(i =>
+      (i.code||"").toLowerCase().includes(q) ||
+      (i.customer||"").toLowerCase().includes(q) ||
+      (i.txnNum||"").toLowerCase().includes(q)
+    );
+  }
+  items = items.slice().sort((a,b) => {
+    const bc = (a.branch||"").localeCompare(b.branch||"");
+    if (bc !== 0) return bc;
+    return new Date(a.pickupDate||0) - new Date(b.pickupDate||0);
+  });
+  if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p class="empty-sub">Nothing currently reserved.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr class="td-clickable" data-txn="${esc(i.txnNum)}">
+      <td class="td-code">${esc(i.code)}</td>
+      <td>${esc(i.category)||"—"}</td>
+      <td>${esc(i.branch)||"—"}</td>
+      <td>${esc(i.customer)||"—"}</td>
+      <td class="td-txn">${esc(i.txnNum)||"—"}</td>
+      <td>${fmtDate(i.pickupDate)}</td>
+      <td>${fmtDate(i.returnDate)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-txn]").forEach(r=>{
+    if (r.dataset.txn) r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn));
+  });
+}
+
+function initReservedPage() {
+  document.getElementById("resSearch")?.addEventListener("input", e=>{ReservedSt.search=e.target.value; renderReservedPage();});
+  document.getElementById("resFilterBranch")?.addEventListener("change", e=>{ReservedSt.branch=e.target.value; renderReservedPage();});
+  renderReservedPage();
+}
+
+// ── RECENTLY SOLD PAGE ────────────────────────────────────────
+// Two distinct sources of "sold": (1) whole transactions where the
+// Transaction Form's own Type column (L) says Retail — every item in
+// them counts; (2) a "PURCHASED ITEMS:" section that can appear inside
+// an otherwise-rental order (someone rents a gown but buys an
+// accessory outright) — only those specific items count there.
+const SoldSt = { search:"", branch:"" };
+
+function getRecentlySoldRows() {
+  const rows = [];
+  for (const t of State.transactions) {
+    if (t.isRetail || (t.txnType||"").toLowerCase()==="retail") {
+      const items = [...(t.trackedItems||[])];
+      Object.entries(t.qtyItems||{}).forEach(([k,v]) => items.push(v>1 ? `${k} ×${v}` : k));
+      items.forEach(item => rows.push({ item, t }));
+    } else if (t.purchasedItems && t.purchasedItems.length) {
+      t.purchasedItems.forEach(item => rows.push({ item, t }));
+    }
+  }
+  rows.sort((a,b) => new Date(b.t.pickupDate||0) - new Date(a.t.pickupDate||0));
+  return rows;
+}
+
+function renderRecentlySoldPage() {
+  const tbody = document.getElementById("soldAllBody");
+  const countEl = document.getElementById("soldAllCount");
+  if (!tbody) return;
+  let rows = getRecentlySoldRows();
+  if (SoldSt.branch) rows = rows.filter(r => r.t.branch === SoldSt.branch);
+  if (SoldSt.search) {
+    const q = SoldSt.search.toLowerCase();
+    rows = rows.filter(r =>
+      r.item.toLowerCase().includes(q) ||
+      (r.t.customer||"").toLowerCase().includes(q) ||
+      (r.t.txnNum||"").toLowerCase().includes(q)
+    );
+  }
+  if (countEl) countEl.textContent = rows.length + (rows.length===1?" item":" items");
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><p class="empty-sub">No recently sold items found.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr class="td-clickable" data-txn="${esc(r.t.txnNum)}">
+      <td class="td-code">${esc(r.item)}</td>
+      <td>${esc(r.t.branch)||"—"}</td>
+      <td>${esc(r.t.customer)||"—"}</td>
+      <td class="td-txn">${esc(r.t.txnNum)}</td>
+      <td>${fmtDate(r.t.pickupDate)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-txn]").forEach(r=>r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn)));
+}
+
+function initRecentlySoldPage() {
+  document.getElementById("soldSearch")?.addEventListener("input", e=>{SoldSt.search=e.target.value; renderRecentlySoldPage();});
+  document.getElementById("soldFilterBranch")?.addEventListener("change", e=>{SoldSt.branch=e.target.value; renderRecentlySoldPage();});
+  renderRecentlySoldPage();
+}
+
 // ── BRANCH PAGES ──────────────────────────────────────────────
 // One page per branch (gorordo.html, mandaue.html, ...), each with
 // data-branch="GORORDO" etc. on <body>. Rather than duplicate all the
@@ -1464,10 +1585,11 @@ function initPendingPage() {
 // the user to change it back to "All Branches" with).
 function renderBranchStats(branch) {
   const items = State.inventory.filter(i => i.branch === branch);
-  const counts = { total: items.length, available:0, released:0, forLaundry:0, sold:0 };
+  const counts = { total: items.length, available:0, released:0, reserved:0, forLaundry:0, sold:0 };
   for (const i of items) {
     if      (i.status === "AVAILABLE")   counts.available++;
     else if (i.status === "RELEASED")    counts.released++;
+    else if (i.status === "RESERVED")    counts.reserved++;
     else if (i.status === "FOR LAUNDRY") counts.forLaundry++;
     else if (i.status === "SOLD" || i.status === "SOLD OUT") counts.sold++;
   }
@@ -1475,8 +1597,57 @@ function renderBranchStats(branch) {
   set("brStatTotal",     counts.total);
   set("brStatAvailable", counts.available);
   set("brStatReleased",  counts.released);
+  set("brStatReserved",  counts.reserved);
   set("brStatLaundry",   counts.forLaundry);
   set("brStatSold",      counts.sold);
+}
+
+function renderBranchSoldOut() {
+  const tbody = document.getElementById("soldOutBody");
+  const countEl = document.getElementById("soldOutCount");
+  if (!tbody) return;
+  const branch = document.body.dataset.branch || "";
+  const items = State.inventory.filter(i => i.branch===branch && (i.status==="SOLD"||i.status==="SOLD OUT"));
+  if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><p class="empty-sub">No sold-out items for this branch.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr class="td-clickable" data-code="${esc(i.code)}">
+      <td class="td-code">${esc(i.code)}</td>
+      <td>${esc(i.category)||"—"}</td>
+      <td>${esc(i.customer)||"—"}</td>
+      <td>${fmtDate(i.pickupDate)}</td>
+      <td style="font-family:var(--ff-mono)">${esc(i.retailPrice)||"—"}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-code]").forEach(r=>r.addEventListener("click",()=>showItemDrawer(r.dataset.code)));
+}
+
+function renderBranchReserved() {
+  const tbody = document.getElementById("reservedBody");
+  const countEl = document.getElementById("reservedCount");
+  if (!tbody) return;
+  const branch = document.body.dataset.branch || "";
+  const items = State.inventory.filter(i => i.branch===branch && i.status==="RESERVED")
+    .slice().sort((a,b)=> new Date(a.pickupDate||0) - new Date(b.pickupDate||0));
+  if (countEl) countEl.textContent = items.length + (items.length===1?" item":" items");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><p class="empty-sub">Nothing currently reserved.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(i => `
+    <tr class="td-clickable" data-txn="${esc(i.txnNum)}">
+      <td class="td-code">${esc(i.code)}</td>
+      <td>${esc(i.category)||"—"}</td>
+      <td>${esc(i.customer)||"—"}</td>
+      <td class="td-txn">${esc(i.txnNum)||"—"}</td>
+      <td>${fmtDate(i.pickupDate)}</td>
+      <td>${fmtDate(i.returnDate)}</td>
+    </tr>`).join("");
+  tbody.querySelectorAll("tr[data-txn]").forEach(r=>{
+    if (r.dataset.txn) r.addEventListener("click",()=>showTxnDrawer(r.dataset.txn));
+  });
 }
 
 function initBranchTabs() {
@@ -1501,6 +1672,8 @@ function initBranchPage() {
   initInventoryPage();
   initTransactionsPage();
   initCalendarPage();
+  renderBranchSoldOut();
+  renderBranchReserved();
 }
 
 function renderBranchPage() {
@@ -1508,6 +1681,8 @@ function renderBranchPage() {
   renderInventory();
   renderTransactions();
   renderCalendar();
+  renderBranchSoldOut();
+  renderBranchReserved();
 }
 
 // ── PACKAGES PAGE ─────────────────────────────────────────────
@@ -1641,6 +1816,8 @@ function renderCurrentPage() {
   else if (page==="package-calendar") renderPackageCalendar();
   else if (page==="laundry")      renderLaundryPage();
   else if (page==="pending")      renderPendingTransactions();
+  else if (page==="reserved")     renderReservedPage();
+  else if (page==="recently-sold") renderRecentlySoldPage();
   else if (page==="branch")       renderBranchPage();
   else if (page==="search")       { /* search renders on user action */ }
 }
@@ -1667,6 +1844,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     else if (page==="package-calendar") initPackageCalendarPage();
     else if (page==="laundry")      initLaundryPage();
     else if (page==="pending")      initPendingPage();
+    else if (page==="reserved")     initReservedPage();
+    else if (page==="recently-sold") initRecentlySoldPage();
     else if (page==="branch")       initBranchPage();
     else if (page==="search")       initItemSearchPage();
     else renderDashboard();
@@ -1684,6 +1863,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       else if (page==="package-calendar") initPackageCalendarPage();
       else if (page==="laundry")      initLaundryPage();
       else if (page==="pending")      initPendingPage();
+      else if (page==="reserved")     initReservedPage();
+      else if (page==="recently-sold") initRecentlySoldPage();
       else if (page==="branch")       initBranchPage();
       else if (page==="search")       initItemSearchPage();
       else renderDashboard();

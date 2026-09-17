@@ -110,6 +110,7 @@ input, select { font-family: var(--ff-body); }
 .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .badge-available  { background: #e8f3ed; color: var(--status-available); }
 .badge-released   { background: #e5f3f3; color: var(--status-released); }
+.badge-reserved   { background: #f3e8ff; color: #7c3aed; }
 .badge-laundry    { background: #f5ede0; color: var(--status-laundry); }
 .badge-sold       { background: #eeeeee; color: var(--status-sold); }
 .badge-ongoing    { background: #e8f0f8; color: var(--navy); }
